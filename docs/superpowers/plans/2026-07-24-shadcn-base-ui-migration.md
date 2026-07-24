@@ -431,133 +431,129 @@ git commit -m "chore: remove obsolete hand-written CSS"
 
 ---
 
-### Task 6: Fix duplicate React module instances breaking SSR
+### Task 6: Revert the speculative SSR fix and document the real, narrower finding
 
 **Files:**
-- Modify: `vite.config.ts`
+- Modify: `vite.config.ts` (revert to its Task-4-era state)
+- Modify: `README.md` (add a documented known-issue entry)
 
 **Interfaces:**
 - Consumes: nothing new.
-- Produces: a working SSR render for any route that uses `@base-ui/react`
-  components (i.e. `Select`, and transitively any other Base UI primitive),
-  both in `npm run dev` and in the production build (`npm run build` +
-  running `.output/server/index.mjs`).
+- Produces: nothing new — this task removes a change, it doesn't add a
+  capability.
 
-**Why this task exists:** discovered during Task 5's manual browser
-verification, not anticipated by the original plan. `npm run build`
-passing (Tasks 1-4) only proves bundling/type-checking succeeds — it does
-not exercise the actual SSR runtime, which is where this bug lives.
+**Why this task exists, and supersedes the previous version of this task
+in this plan's history:** an earlier version of this task (commit
+`bc7ad30`, "fix: dedupe react and bundle @base-ui packages for SSR...")
+was written and applied based on an incomplete diagnosis. It has since
+been proven, via careful before/after testing with fully cleared build
+caches on both sides, to be unnecessary:
 
-- [ ] **Step 1: Reproduce the bug**
+- **The production build (`npm run build` + `node .output/server/index.mjs`)
+  was never broken.** The original diagnosis never actually tested a true
+  pre-fix production baseline — the first production test performed was
+  already run after the fix was in place. Retested from a clean cache with
+  the unmodified `vite.config.ts`: the SSR HTML output is fully correct
+  (the `Select` renders with the right value, no errors logged).
+- **`npm run dev` (`vite dev`)'s SSR module runner does genuinely crash**
+  on every request that renders the `Select` component, with or without
+  `bc7ad30`'s fix — the fix only changes *which* hook call fails
+  (`useContext` in `@base-ui/react`'s `useFormContext` without the fix;
+  `useSyncExternalStore` in `@base-ui/utils`'s `useStore` with it), not
+  whether it fails.
+- **The browser-facing behavior is unaffected either way.** In all four
+  combinations tested (dev/prod × with/without the fix), the client
+  successfully re-renders after the server-side crash and the page is
+  fully interactive — this was true even before `bc7ad30` was ever
+  written, confirmed on the very first browser check of the unmodified
+  app. The dev-mode server-console error is cosmetic noise, not a
+  functional bug.
 
-Run `npm run build`, then run `node .output/server/index.mjs` in the
-background and `curl -s http://localhost:3000/` in a second terminal.
-Expected (before the fix): the HTML response is missing the rendered
-`<Select>` markup (no `NOAA-15`/combobox content), and the server process's
-stdout/stderr shows:
+Since `bc7ad30` doesn't fix a real problem (production) and doesn't
+actually resolve the one real problem it touches (dev-mode console noise
+persists either way, just relocated), it's not worth keeping — it changes
+production's dependency bundling strategy (inlining `@base-ui/react` into
+the main SSR chunk instead of leaving it as a separate lazily-resolved
+chunk) for no verified benefit, which is exactly the kind of unnecessary
+change to avoid.
 
-```
-Error in renderToReadableStream: TypeError: Cannot read properties of null (reading 'useContext')
-    at ... useFormContext (.../@base-ui/react/internals/form-context/FormContext.mjs:20:16)
-    at SelectRoot (.../@base-ui/react/select/root/SelectRoot.mjs:...)
-```
+**Root cause (still valid, worth keeping documented even though not worth
+"fixing"):** this project's Deno-managed `node_modules` gives `@base-ui/react`
+and `@base-ui/utils` their own nested `react`/`react-dom` copies rather
+than hoisting/deduping them like plain npm would. `vite dev`'s SSR module
+runner resolves each package's internal imports via Node's native
+resolution (nearest `node_modules` wins), landing on the nested copy —
+two physical React instances means the nested copy's hook dispatcher is
+never initialized, so any hook call inside `@base-ui/react`/`@base-ui/utils`
+throws when the *dev* SSR runner renders it. The production build doesn't
+have this problem because Nitro's Rollup-based bundler resolves and
+bundles the whole module graph itself rather than falling back to Node's
+runtime resolution for "external" packages.
 
-**Root cause:** this project's Deno-managed `node_modules` gives each
-package its own isolated dependency tree rather than hoisting/deduping
-like plain npm. `@base-ui/react` and `@base-ui/utils` each carry their own
-nested copy of `react`/`react-dom` (e.g.
-`node_modules/.deno/@base-ui+react@1.6.0/node_modules/react`), distinct
-from the top-level `node_modules/react`. Vite's SSR pipeline treats
-`node_modules` packages as "external" by default (using Node's native
-`require`/`import` resolution, not Vite's own resolver) — so when
-`@base-ui/react`'s code (loaded from inside its own nested directory)
-resolves `react`, Node's resolution algorithm finds the *nearest*
-`node_modules/react` relative to that file, which is the nested copy, not
-the top-level one used to actually run the render. Two separate physical
-React module instances means React's internal dispatcher (used to
-implement hooks) is only set on the copy react-dom actually renders with;
-the nested copy's dispatcher stays `null`, so any hook call inside
-`@base-ui/react` throws.
-
-- [ ] **Step 2: Apply the fix**
-
-In `vite.config.ts`, change:
-
-```ts
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-    },
-  },
-```
-
-to:
-
-```ts
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-    },
-    dedupe: ["react", "react-dom"],
-  },
-  ssr: {
-    noExternal: ["@base-ui/react", "@base-ui/utils"],
-  },
-```
-
-`ssr.noExternal` forces Vite to route these two packages through its own
-module resolution/bundling pipeline instead of leaving them to Node's
-native `require`, so `resolve.dedupe` can actually take effect and
-canonicalize every `react`/`react-dom` import (including ones from inside
-`@base-ui/react`'s and `@base-ui/utils`'s nested `node_modules`) to the
-single top-level copy.
-
-Do not add a `resolve.alias` entry for `react`/`react-dom` themselves (a
-tempting-looking alternative) — it was tried during investigation and
-breaks the dev server with `ReferenceError: module is not defined`,
-because it forces Vite's SSR module runner to evaluate React's CJS entry
-point as if it were ESM. `dedupe` + `ssr.noExternal` is the combination
-that actually works.
-
-- [ ] **Step 3: Verify the production build**
-
-Repeat Step 1's reproduction: `npm run build`, run
-`node .output/server/index.mjs` in the background, `curl -s
-http://localhost:3000/`. Expected: HTTP 200, the response HTML contains
-the fully rendered controls (e.g. a `data-slot="select-trigger"` element
-with `15` as its visible value), and the server process logs no
-`renderToReadableStream` errors. Stop the background server afterward.
-
-- [ ] **Step 4: Note the remaining dev-mode-only limitation**
-
-With this fix, `npm run dev` (`vite dev`)'s browser-facing behavior is
-correct — the page loads, and clicking/interacting with the `Select`
-correctly updates its value, verified with no functional impact. However,
-`vite dev`'s SSR module runner still logs the same class of error to the
-terminal on every request (a dev-mode-only quirk in how Vite's dev SSR
-module runner resolves these nested packages, distinct from the
-production Rollup-bundled path this fix addresses), and the browser
-console additionally logs "Invalid hook call" warnings during the
-client-side re-render that follows. This is cosmetic only — verified
-functionally correct via direct interaction — and is not required to be
-fixed by this task. If you want to attempt it anyway, note that adding
-`ssr.optimizeDeps.include` for these packages does not work (`shadcn add`
-fails with `Failed to resolve dependency: @base-ui/utils, present in ssr
-'optimizeDeps.include'`) — do not spend significant additional time on
-this; report it as a known limitation instead.
-
-- [ ] **Step 5: Confirm `npm run build` still passes**
-
-Run: `npm run build`
-Expected: succeeds (this only confirms bundling/type-checking — Step 3
-above is what actually proves the fix).
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 1: Revert the vite.config.ts change**
 
 ```bash
-git add vite.config.ts
-git commit -m "fix: dedupe react and bundle @base-ui packages for SSR to fix duplicate React instances"
+git revert bc7ad30 --no-edit
 ```
+
+This should cleanly remove the `dedupe`/`ssr.noExternal` block added in
+that commit, restoring `vite.config.ts` to its Task-4-era state (just the
+`"@"` path alias under `resolve`, nothing else added).
+
+- [ ] **Step 2: Confirm the revert is clean**
+
+Run: `git show HEAD -- vite.config.ts` and confirm the diff exactly
+removes the `dedupe`/`ssr` block with no other changes. Run: `npm run
+build` — expected to succeed (this was never the problem; it's just
+confirming the revert didn't break anything mechanical).
+
+- [ ] **Step 3: Document the known limitation in README.md**
+
+Add a new subsection under the existing "Known issue" callout in
+`README.md` (the one about `deno desktop --hmr`'s self-triggering watch
+loop), documenting this in the same style — a factual, permanent note for
+future readers, not a task-tracking note:
+
+```markdown
+> Separately, `npm run dev` logs a harmless server-side error on every
+> page load — `Error in renderToReadableStream: TypeError: Cannot read
+> properties of null (reading 'useContext')` (or `'useSyncExternalStore'`),
+> originating inside `@base-ui/react`'s `Select` component. This project's
+> Deno-managed `node_modules` gives `@base-ui/react` and `@base-ui/utils`
+> their own nested `react`/`react-dom` copies instead of deduping them,
+> and Vite's dev-mode SSR module runner resolves into the wrong (nested)
+> copy when rendering `Select`, leaving its hook dispatcher uninitialized.
+> The client always successfully re-renders past this and the app is
+> fully interactive — it's console noise, not a functional bug — and it
+> does not occur in the production build (`deno task build`/`preview`),
+> where Nitro's Rollup-based bundler resolves the whole module graph
+> itself instead of falling back to Node's native runtime resolution.
+```
+
+Place it as a new paragraph directly after the existing `deno desktop
+--hmr` known-issue paragraph, inside the same blockquote, matching its
+tone (plain factual statement, no task-tracking language like "TODO" or
+"discovered during migration").
+
+- [ ] **Step 4: Confirm the project still builds and Select still works**
+
+Run: `npm run build` — expected: succeeds. Then start `npm run dev`,
+confirm the page loads (`get_page_text` or equivalent shows the full
+control panel), and confirm clicking a `Select` option still updates its
+displayed value (e.g. via a direct DOM `.click()` on the option element —
+coordinate-based clicks on this component were unreliable during earlier
+verification and aren't a reliable test method). Expected: works, with
+the server continuing to log the known-limitation error to its own
+console (that's expected and fine — Step 3 documented why).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add README.md
+git commit -m "docs: document known dev-mode SSR console noise from Base UI's Select"
+```
+
+(The revert from Step 1 is already its own commit from `git revert`.)
 
 ---
 
