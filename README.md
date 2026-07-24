@@ -17,7 +17,30 @@ npm install
 deno task dev
 ```
 
-Opens a native window against the TanStack Start dev server with hot reload.
+Runs the plain TanStack Start (Vite) dev server in your browser at
+`http://localhost:1420` — fast hot-reload for UI work, no native window.
+
+```bash
+deno task preview
+```
+
+Builds once and opens the app in a native `deno desktop` window, for
+checking desktop-specific behavior (recording, window chrome). This is a
+one-shot launch, not a watch loop — re-run it after making changes.
+
+> **Known issue:** `deno desktop --hmr` (previously used for `dev`) has a
+> self-triggering watch loop — it writes its own bootstrap file into the
+> project root while watching that same root, so it immediately restarts
+> itself, forever. That's why `dev` no longer uses `deno desktop` at all.
+> Separately, `deno desktop` without `--hmr` (used by `preview`/`build`)
+> has been observed to occasionally loop internally too (repeated Nitro
+> rebuild cycles with no completion) even after clearing its compile cache
+> at `~/.cache/deno/desktop/`. It's worked reliably at other times in this
+> repo's history (see `dist/satelita.AppImage` having been produced
+> end-to-end previously). `deno desktop` is explicitly experimental — if
+> `preview`/`build` hangs, try clearing `~/.cache/deno/desktop/` and
+> `node_modules/.nitro/` and retrying; if it still hangs, that's an
+> upstream `deno desktop` instability, not a project misconfiguration.
 
 ## Build
 

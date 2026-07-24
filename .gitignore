@@ -13,6 +13,7 @@ dist-ssr
 *.local
 .output
 src/routeTree.gen.ts
+.deno_desktop_entry-*.ts
 
 # Editor directories and files
 .vscode/*
