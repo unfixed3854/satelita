@@ -1,5 +1,6 @@
 {
   "include": ["**/*.ts", "**/*.tsx", "**/*.d.ts"],
+  "exclude": ["node_modules", "src/server/**/*.test.ts"],
   "compilerOptions": {
     "strict": true,
     "esModuleInterop": true,
@@ -11,6 +12,7 @@
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "target": "ES2024",
+    "types": ["node", "deno"],
     "allowJs": true,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
