@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>NOAA APT — live</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0d1117; color: #e6edf3;
+    font: 14px/1.5 system-ui, sans-serif;
+    display: flex; flex-direction: column; height: 100vh;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px;
+    padding: 10px 16px; background: #161b22; border-bottom: 1px solid #30363d;
+    flex: 0 0 auto;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  #status { font-variant-numeric: tabular-nums; color: #7ee787; }
+  #status.stale { color: #d29922; }
+  #status.error { color: #f85149; }
+  .meta { margin-left: auto; color: #8b949e; font-size: 12px; }
+  main {
+    flex: 1 1 auto; overflow: auto; display: flex;
+    align-items: flex-start; justify-content: center; padding: 16px;
+  }
+  #img {
+    image-rendering: pixelated;
+    max-width: 100%;
+    border: 1px solid #30363d; background: #010409;
+    min-width: 240px; min-height: 120px;
+  }
+  #empty { color: #8b949e; margin-top: 40px; text-align: center; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>🛰️ NOAA APT — live decode</h1>
+    <span id="status">starting…</span>
+    <span class="meta" id="meta"></span>
+  </header>
+  <main>
+    <img id="img" alt="APT image" hidden />
+    <div id="empty">Waiting for the first decoded lines…<br />
+      (the image builds top-to-bottom as the satellite passes)</div>
+  </main>
+<script>
+  // The decode loop writes raw_sync.png into this same directory.
+  // We poll it with a cache-busting query so the browser always fetches fresh.
+  const IMG = "raw_sync.png";
+  const img = document.getElementById("img");
+  const empty = document.getElementById("empty");
+  const status = document.getElementById("status");
+  const meta = document.getElementById("meta");
+  let lastOk = 0;
+
+  function refresh() {
+    const probe = new Image();
+    const url = IMG + "?t=" + Date.now();
+    probe.onload = () => {
+      img.src = url;
+      img.hidden = false;
+      empty.hidden = true;
+      lastOk = Date.now();
+      meta.textContent = probe.naturalWidth + "×" + probe.naturalHeight + " px";
+    };
+    probe.onerror = () => { /* not written yet — keep waiting */ };
+    probe.src = url;
+  }
+
+  function tick() {
+    const age = lastOk ? (Date.now() - lastOk) / 1000 : null;
+    const now = new Date().toLocaleTimeString();
+    if (age === null) {
+      status.className = ""; status.textContent = "waiting for first image · " + now;
+    } else if (age < 25) {
+      status.className = ""; status.textContent = "live · updated " + Math.round(age) + "s ago · " + now;
+    } else {
+      status.className = "stale"; status.textContent = "stale (" + Math.round(age) + "s) · " + now;
+    }
+  }
+
+  refresh(); tick();
+  setInterval(refresh, 2000);
+  setInterval(tick, 1000);
+</script>
+</body>
+</html>
