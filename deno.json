@@ -20,8 +20,8 @@
     },
     "output": {
       "macos": "./dist/satelita.app",
-      "windows": "./dist/satelita",
-      "linux": "./dist/satelita"
+      "windows": "./dist/satelita.msi",
+      "linux": "./dist/satelita.AppImage"
     }
   }
 }

@@ -22,8 +22,18 @@ Opens a native window against the TanStack Start dev server with hot reload.
 ## Build
 
 ```bash
-npm run build
 deno task build
 ```
 
-Produces a native installer under `dist/` for the current platform.
+Runs `npm run build` and then `deno desktop`, which packages the app using
+the `desktop` block in `deno.json` (app metadata, per-platform icons, and
+per-platform `output` paths). The output file extension determines the
+installer format (`.app` on macOS, `.msi` on Windows, `.AppImage` on Linux),
+so a native installer lands under `dist/` for whichever platform you build
+on — no `--output` flag is needed on the command line.
+
+Verified in this repo: on Linux, `deno task build` runs end-to-end
+headlessly (the compile/bundle step does not require a display) and
+produces a working `dist/satelita.AppImage`. Packaging on macOS/Windows,
+and actually launching the packaged app on any platform, has not been
+exercised here.
