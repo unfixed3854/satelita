@@ -72,6 +72,7 @@ interface Session {
 }
 
 let session: Session | null = null;
+let starting = false;
 
 async function readerLoop(
   stdout: ReadableStream<Uint8Array>,
@@ -160,40 +161,45 @@ async function finalDecode(runDir: string, sat: string, startEpoch: number): Pro
 }
 
 export async function startRecording(sat: string, gain: string, device: number): Promise<string> {
-  if (session !== null) {
+  if (session !== null || starting) {
     throw new Error("Already recording — stop the current pass first.");
   }
+  starting = true;
 
-  const freq = freqForSat(sat);
-  if (!freq) throw new Error("Unknown satellite (use 15, 18 or 19).");
-
-  const startEpoch = nowSecs();
-  const runDir = recordingsDir(`noaa${sat}-${startEpoch}`);
-  await Deno.mkdir(`${runDir}/decode`, { recursive: true });
-
-  const rtlArgs = ["-d", String(device), "-f", freq, "-M", "fm", "-s", String(CAPTURE_RATE), "-E", "dc", "-F", "9"];
-  if (gain !== "agc" && gain !== "auto") {
-    rtlArgs.push("-g", gain);
-  }
-  rtlArgs.push("-");
-
-  let rtl: Deno.ChildProcess;
   try {
-    rtl = new Deno.Command("rtl_fm", { args: rtlArgs, stdout: "piped", stderr: "piped" }).spawn();
-  } catch (e) {
-    throw new Error(`Failed to start rtl_fm: ${e instanceof Error ? e.message : e}`);
+    const freq = freqForSat(sat);
+    if (!freq) throw new Error("Unknown satellite (use 15, 18 or 19).");
+
+    const startEpoch = nowSecs();
+    const runDir = recordingsDir(`noaa${sat}-${startEpoch}`);
+    await Deno.mkdir(`${runDir}/decode`, { recursive: true });
+
+    const rtlArgs = ["-d", String(device), "-f", freq, "-M", "fm", "-s", String(CAPTURE_RATE), "-E", "dc", "-F", "9"];
+    if (gain !== "agc" && gain !== "auto") {
+      rtlArgs.push("-g", gain);
+    }
+    rtlArgs.push("-");
+
+    let rtl: Deno.ChildProcess;
+    try {
+      rtl = new Deno.Command("rtl_fm", { args: rtlArgs, stdout: "piped", stderr: "piped" }).spawn();
+    } catch (e) {
+      throw new Error(`Failed to start rtl_fm: ${e instanceof Error ? e.message : e}`);
+    }
+
+    const rtlLog = await Deno.open(`${runDir}/rtl.log`, { create: true, write: true, truncate: true });
+    rtl.stderr.pipeTo(rtlLog.writable).catch(() => {});
+
+    const rawPath = `${runDir}/signal.raw`;
+    const reader = readerLoop(rtl.stdout, rawPath, startEpoch);
+
+    session = { rtl, reader, runDir, sat, startEpoch };
+
+    emitStatus("recording", `Recording NOAA-${sat} on ${freq}`, 0);
+    return `Recording NOAA-${sat} (${freq})`;
+  } finally {
+    starting = false;
   }
-
-  const rtlLog = await Deno.open(`${runDir}/rtl.log`, { create: true, write: true, truncate: true });
-  rtl.stderr.pipeTo(rtlLog.writable).catch(() => {});
-
-  const rawPath = `${runDir}/signal.raw`;
-  const reader = readerLoop(rtl.stdout, rawPath, startEpoch);
-
-  session = { rtl, reader, runDir, sat, startEpoch };
-
-  emitStatus("recording", `Recording NOAA-${sat} on ${freq}`, 0);
-  return `Recording NOAA-${sat} (${freq})`;
 }
 
 export async function stopRecording(): Promise<string> {
