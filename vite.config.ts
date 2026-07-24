@@ -11,11 +11,16 @@ export default defineConfig({
   // specifier that only Deno's resolver understands (via the `imports` map
   // in `deno.json`). Vite's SSR bundler can't resolve it at build time, so
   // it must stay external in the built output; `deno desktop` supplies it
-  // at runtime when it serves the Nitro build.
+  // at runtime when it serves the Nitro build. `optimizeDeps.exclude` keeps
+  // the dev-server's separate esbuild-based dependency scanner from trying
+  // (and failing) to resolve it too.
   build: {
     rolldownOptions: {
       external: ["@std/encoding/base64"],
     },
+  },
+  optimizeDeps: {
+    exclude: ["@std/encoding/base64"],
   },
   // Without an explicit preset, Nitro's package-manager sniffing sees the
   // `npm_config_user_agent=deno/...` that `deno task` sets and infers a
