@@ -21,11 +21,19 @@ Tailwind CSS v4, shadcn/ui CLI, Base UI, TypeScript, npm.
 
 - Package manager: npm (matches existing `package-lock.json` and
   `npm run dev`/`npm run build`, which the Deno tasks in `deno.json` wrap).
-- shadcn/ui style: `new-york`.
-- shadcn/ui base library: Base UI (`base: "base"` — shadcn/ui's current
-  default; no non-standard flag needed).
-- Theme: shadcn/ui's stock default (zinc-based) CSS variables. Do not
-  reproduce the old `--bg`/`--panel`/`--accent`/`--danger` palette.
+- shadcn/ui preset: `nova` (the CLI's own current default preset), Base UI
+  flavor — the CLI writes this into `components.json` as
+  `"style": "base-nova"`. (Verified live against `shadcn@4.14.1`: the CLI
+  no longer has a "style: new-york + base color" prompt flow or a `"base"`
+  field in `components.json` — the Radix/Base UI choice is baked into the
+  `style` string itself via a `base-`/`radix-` prefix on one of 8 presets.
+  `new-york` still exists as a style but only ever installs Radix
+  components, so it's incompatible with the Base UI requirement.)
+- shadcn/ui base library: Base UI (`--base base` on the init command).
+- Theme: `nova`'s own default color, `"neutral"` (a zero-chroma gray) —
+  this is shadcn/ui's actual current stock default, more so than the
+  `zinc` value assumed earlier in this plan's design. Do not reproduce the
+  old `--bg`/`--panel`/`--accent`/`--danger` palette.
 - Dark mode: dark-only, forced via `className="dark"` on `<html>` in
   `src/routes/__root.tsx`. No light/dark toggle UI.
 - Only these shadcn/ui components are needed: `button`, `select`, `input`,
@@ -44,8 +52,8 @@ Tailwind CSS v4, shadcn/ui CLI, Base UI, TypeScript, npm.
 - `vite.config.ts` — modify: add Tailwind CSS v4 Vite plugin (written by
   `shadcn init`)
 - `tsconfig.json` — modify: add `@/*` path alias (written by `shadcn init`)
-- `components.json` — create: shadcn/ui config (`style: new-york`,
-  `base: base`, `cssVariables: true`)
+- `components.json` — create: shadcn/ui config (`style: "base-nova"`,
+  `tailwind.baseColor: "neutral"`, `tailwind.cssVariables: true`)
 - `src/lib/utils.ts` — create: `cn()` class-merging helper
 - `src/app.css` — modify: replace custom CSS with `@import "tailwindcss"` +
   shadcn/ui's generated theme variables; obsolete custom classes removed
@@ -65,21 +73,32 @@ Tailwind CSS v4, shadcn/ui CLI, Base UI, TypeScript, npm.
 
 **Interfaces:**
 - Produces: `@/*` import alias resolving to `src/*`; `cn(...)` export from
-  `src/lib/utils.ts`; `components.json` with `style: "new-york"`,
-  `"base": "base"`, `tailwind.cssVariables: true`, consumed by Task 2's
-  `shadcn add` calls.
+  `src/lib/utils.ts`; `components.json` with `style: "base-nova"`,
+  `tailwind.baseColor: "neutral"`, `tailwind.cssVariables: true`, consumed
+  by Task 2's `shadcn add` calls.
 
 - [ ] **Step 1: Run the shadcn init CLI**
 
 Run:
 
 ```bash
-npx shadcn@latest init --yes --template start --base base
+npx shadcn@latest init --yes --preset nova --base base --template start
 ```
 
-Answer any remaining interactive prompts with the defaults (style:
-new-york, base color: zinc, CSS variables: yes) if the `--yes`/`--template`
-flags don't suppress all of them.
+This CLI version's `init` doesn't have an interactive "style: new-york +
+base color" prompt flow — it selects among 8 fixed presets (`nova`, `vega`,
+`maia`, `lyra`, `mira`, `luma`, `sera`, `rhea`), each available in a Radix
+or Base UI flavor. `--preset nova --base base` selects the Base UI flavor
+of the CLI's own current default preset, non-interactively. If it still
+prompts for anything else, accept the default.
+
+If `init` reports it can't find a Tailwind CSS config or valid import
+alias (this can happen even though the project already has `vite.config.ts`
+and `tsconfig.json`, if it can't auto-detect them), first add a minimal
+Tailwind v4 Vite plugin and `@/*` alias by hand — install
+`tailwindcss @tailwindcss/vite`, add `tailwindcss()` to the `plugins` array
+in `vite.config.ts` and a `resolve.alias` entry mapping `"@"` to
+`path.resolve(__dirname, "./src")` — then re-run the `init` command above.
 
 - [ ] **Step 2: Verify `components.json` matches the required config**
 
@@ -87,19 +106,19 @@ Read `components.json` and confirm it contains:
 
 ```json
 {
-  "style": "new-york",
-  "base": "base",
+  "style": "base-nova",
   "tailwind": {
+    "baseColor": "neutral",
     "cssVariables": true
   }
 }
 ```
 
 (Exact key layout may differ slightly by CLI version — the three values
-above are what matter.) If `style` or `base` don't match, edit
-`components.json` directly to fix them now, before any components are
-added — the style/base can't be changed retroactively once components
-exist in `src/components/ui/`.
+above are what matter.) If `style` or `tailwind.baseColor` don't match,
+edit `components.json` directly to fix them now, before any components are
+added — they can't be changed retroactively once components exist in
+`src/components/ui/`.
 
 - [ ] **Step 3: Verify the path alias and Tailwind wiring**
 

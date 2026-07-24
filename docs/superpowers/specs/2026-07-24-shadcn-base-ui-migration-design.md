@@ -24,15 +24,28 @@ server functions) is unrelated and untouched.
 
 ## Decisions
 
-- **Theme**: adopt shadcn/ui's stock default theme (zinc-based CSS
-  variables) rather than reproducing the app's current custom palette
-  (`--bg`, `--panel`, `--accent`, etc.). Those custom properties and all
-  classes built on them in `src/app.css` are removed.
-- **Style variant**: `new-york` (tighter spacing/radius — fits a dense
-  instrument-panel-style control layout better than the more spacious
-  `default` style).
-- **Base library**: Base UI (`--base base`, shadcn/ui's current default —
-  no flag needed).
+- **Theme**: adopt shadcn/ui's stock default theme rather than reproducing
+  the app's current custom palette (`--bg`, `--panel`, `--accent`, etc.).
+  Those custom properties and all classes built on them in `src/app.css`
+  are removed.
+- **Style/preset**: `nova` — the shadcn/ui CLI's own current default
+  preset (`--preset nova`), used in its Base UI flavor (`--base base`,
+  which the CLI writes into `components.json` as `"style": "base-nova"`).
+
+  (Verified against the live CLI, superseding earlier doc research done
+  during brainstorming: `shadcn init` no longer offers a "style: new-york
+  + base color: zinc" prompt flow — it now offers 8 fixed presets `nova`/
+  `vega`/`maia`/`lyra`/`mira`/`luma`/`sera`/`rhea`, each available in a
+  Radix or Base UI flavor via the `style` string itself, e.g. `base-nova`
+  vs `radix-nova`. `components.json` has no separate `"base"` field. The
+  legacy `"style": "new-york"` value still exists but only ever installs
+  Radix components — there is no Base UI variant registered under it, so
+  it's incompatible with the Base UI requirement. `nova`'s default color
+  is `"neutral"`, a zero-chroma gray distinct from `zinc` — since `nova`
+  is the CLI's actual current default, using its default color satisfies
+  "shadcn's stock default theme" more literally than the `zinc` guess
+  made earlier.)
+- **Base library**: Base UI (`--base base`).
 - **Dark mode**: stays dark-only, matching current behavior. No light/dark
   toggle is introduced (out of scope). Forced by adding `className="dark"`
   to the `<html>` element in `src/routes/__root.tsx`, which activates
@@ -43,16 +56,19 @@ server functions) is unrelated and untouched.
 
 ## Tooling setup
 
-1. `npx shadcn@latest init` against the existing Vite + TanStack Start
-   project. Expected to auto-detect the framework and:
+1. `npx shadcn@latest init --preset nova --base base` against the existing
+   Vite + TanStack Start project. Expected to auto-detect the framework and:
    - Install Tailwind CSS v4 and its Vite plugin, wiring it into
      `vite.config.ts`
    - Add the `@/*` path alias to `tsconfig.json`
-   - Write `components.json` (`style: new-york`, `base: base`,
-     `cssVariables: true`)
+   - Write `components.json` (`style: "base-nova"`,
+     `tailwind.baseColor: "neutral"`, `tailwind.cssVariables: true`)
    - Add `src/lib/utils.ts` (the `cn` class-merging helper)
    - Rewrite `src/app.css` to `@import "tailwindcss"` plus shadcn/ui's
-     generated default theme CSS variables
+     generated `nova`-preset theme CSS variables (semantic variable names —
+     `--background`, `--foreground`, `--primary`, `--destructive`,
+     `--muted-foreground`, `--border`, etc. — are the same across every
+     preset, so downstream component code isn't preset-specific)
 2. `npx shadcn@latest add button select input label badge alert` to
    scaffold the needed primitives into `src/components/ui/`.
 
