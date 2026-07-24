@@ -246,3 +246,15 @@ export function abortActiveSession(): void {
 globalThis.addEventListener("unload", () => {
   abortActiveSession();
 });
+
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  try {
+    Deno.addSignalListener(signal, () => {
+      abortActiveSession();
+      Deno.exit();
+    });
+  } catch {
+    // Signal not supported on this platform (e.g. some SIGINT/SIGTERM
+    // combinations on Windows) — unload listener above is the fallback.
+  }
+}
