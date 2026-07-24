@@ -13,6 +13,10 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+    dedupe: ["react", "react-dom"],
+  },
+  ssr: {
+    noExternal: ["@base-ui/react", "@base-ui/utils"],
   },
   // Without an explicit preset, Nitro's package-manager sniffing sees the
   // `npm_config_user_agent=deno/...` that `deno task` sets and infers a
