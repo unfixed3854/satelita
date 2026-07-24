@@ -1,6 +1,18 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { startRecordingFn, stopRecordingFn } from "../server/functions";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 type LinePayload = { start_line: number; width: number; count: number; pixels_b64: string };
 type FinalPayload = { data_url: string };
@@ -18,6 +30,12 @@ function fmtElapsed(s: number) {
   const m = Math.floor(s / 60);
   const r = s % 60;
   return `${m}:${String(r).padStart(2, "0")}`;
+}
+
+function badgeVariant(state: string): "default" | "secondary" | "outline" {
+  if (state === "recording") return "default";
+  if (state === "stopped") return "outline";
+  return "secondary";
 }
 
 function b64ToBytes(b64: string): Uint8Array {
@@ -134,69 +152,87 @@ function App() {
   }
 
   return (
-    <main className="app">
-      <header className="topbar">
-        <h1>🛰️ satelita — NOAA APT live</h1>
-        <div className={`status ${statusState}`}>
-          {recording && <span className="dot" />}
-          <span>{status}</span>
-          {recording && <span className="elapsed">{fmtElapsed(elapsed)}</span>}
+    <main className="flex h-screen flex-col">
+      <header className="flex items-center gap-4 border-b p-4">
+        <h1 className="text-base font-semibold">🛰️ satelita — NOAA APT live</h1>
+        <div className="ml-auto flex items-center gap-2">
+          {recording && <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-destructive" />}
+          <Badge variant={badgeVariant(statusState)}>{status}</Badge>
+          {recording && <span className="font-semibold tabular-nums">{fmtElapsed(elapsed)}</span>}
         </div>
       </header>
 
-      <section className="controls">
-        <label>
-          Satellite
-          <select value={sat} onChange={(e) => setSat(e.target.value)} disabled={recording}>
-            {SATS.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Gain (dB)
-          <input
+      <section className="flex flex-wrap items-end gap-4 border-b p-4">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="sat">Satellite</Label>
+          <Select value={sat} onValueChange={(value) => value && setSat(value)} disabled={recording}>
+            <SelectTrigger id="sat" className="w-[220px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SATS.map((s) => (
+                <SelectItem key={s.id} value={s.id}>
+                  {s.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="gain">Gain (dB)</Label>
+          <Input
+            id="gain"
             value={gain}
             onChange={(e) => setGain(e.target.value)}
             disabled={recording}
             placeholder="45 or agc"
           />
-        </label>
-        <label>
-          Device
-          <input
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="device">Device</Label>
+          <Input
+            id="device"
+            className="w-12"
             value={device}
             onChange={(e) => setDevice(e.target.value)}
             disabled={recording}
-            style={{ width: "3rem" }}
           />
-        </label>
+        </div>
         {!recording ? (
-          <button className="rec" onClick={start}>
-            ● Record
-          </button>
+          <Button onClick={start}>● Record</Button>
         ) : (
-          <button className="stop" onClick={stop}>
+          <Button variant="destructive" onClick={stop}>
             ■ Stop
-          </button>
+          </Button>
         )}
-        <span className="counter">{lines} lines</span>
+        <span className="text-xs text-muted-foreground tabular-nums">{lines} lines</span>
       </section>
 
-      {error && <div className="error">⚠ {error}</div>}
+      {error && (
+        <Alert variant="destructive" className="mx-4 mt-3 w-auto">
+          <AlertDescription>⚠ {error}</AlertDescription>
+        </Alert>
+      )}
 
-      <section className="viewport" ref={wrapRef}>
-        <canvas ref={canvasRef} className="apt" style={{ display: finalUrl ? "none" : "block" }} />
+      <section className="flex flex-1 items-start justify-center overflow-auto p-4" ref={wrapRef}>
+        <canvas
+          ref={canvasRef}
+          className="w-full border bg-black"
+          style={{ display: finalUrl ? "none" : "block", imageRendering: "pixelated" }}
+        />
         {finalUrl && (
-          <div className="final">
-            <div className="final-label">Final image (satdump — calibrated)</div>
-            <img className="apt" src={finalUrl} alt="Final APT image" />
+          <div className="w-full">
+            <div className="mb-1.5 text-sm font-medium">Final image (satdump — calibrated)</div>
+            <img
+              className="w-full border bg-black"
+              style={{ imageRendering: "pixelated" }}
+              src={finalUrl}
+              alt="Final APT image"
+            />
           </div>
         )}
         {lines === 0 && !finalUrl && (
-          <div className="placeholder">
+          <div className="mt-12 max-w-[420px] text-center text-muted-foreground">
             {recording
               ? "Waiting for the first decoded lines… the image builds top-to-bottom in real time."
               : "No image yet. Start a recording when the satellite is above the horizon."}
