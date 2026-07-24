@@ -1,0 +1,27 @@
+{
+  "imports": {
+    "@std/assert": "jsr:@std/assert@^1",
+    "@std/encoding": "jsr:@std/encoding@^1"
+  },
+  "tasks": {
+    "dev": "deno desktop --hmr --allow-env --allow-read --allow-write --allow-net --allow-run=rtl_fm,sox,satdump .",
+    "build": "npm run build && deno desktop --allow-env --allow-read --allow-write --allow-net --allow-run=rtl_fm,sox,satdump .",
+    "test": "deno test --allow-env --allow-read --allow-write src/server/"
+  },
+  "desktop": {
+    "app": {
+      "name": "satelita",
+      "identifier": "com.magmast.satelita",
+      "icons": {
+        "macos": "./icons/icon.icns",
+        "windows": "./icons/icon.ico",
+        "linux": "./icons/icon.png"
+      }
+    },
+    "output": {
+      "macos": "./dist/satelita.app",
+      "windows": "./dist/satelita",
+      "linux": "./dist/satelita"
+    }
+  }
+}
