@@ -41,6 +41,20 @@ one-shot launch, not a watch loop — re-run it after making changes.
 > `preview`/`build` hangs, try clearing `~/.cache/deno/desktop/` and
 > `node_modules/.nitro/` and retrying; if it still hangs, that's an
 > upstream `deno desktop` instability, not a project misconfiguration.
+>
+> Separately, `npm run dev` logs a harmless server-side error on every
+> page load — `Error in renderToReadableStream: TypeError: Cannot read
+> properties of null (reading 'useContext')` (or `'useSyncExternalStore'`),
+> originating inside `@base-ui/react`'s `Select` component. This project's
+> Deno-managed `node_modules` gives `@base-ui/react` and `@base-ui/utils`
+> their own nested `react`/`react-dom` copies instead of deduping them,
+> and Vite's dev-mode SSR module runner resolves into the wrong (nested)
+> copy when rendering `Select`, leaving its hook dispatcher uninitialized.
+> The client always successfully re-renders past this and the app is
+> fully interactive — it's console noise, not a functional bug — and it
+> does not occur in the production build (`deno task build`/`preview`),
+> where Nitro's Rollup-based bundler resolves the whole module graph
+> itself instead of falling back to Node's native runtime resolution.
 
 ## Build
 
