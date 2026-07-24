@@ -1,7 +1,29 @@
-# Tauri + React + Typescript
+# satelita
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+A desktop app for live-decoding NOAA weather-satellite APT transmissions
+from an RTL-SDR dongle. Built with [TanStack Start](https://tanstack.com/start)
+and packaged as a native app with [`deno desktop`](https://docs.deno.com/runtime/desktop/).
 
-## Recommended IDE Setup
+## Requirements
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+- [Deno](https://deno.com/) 2.9+
+- `rtl_fm`, `sox`, and `satdump` on `PATH`
+- An RTL-SDR dongle
+
+## Development
+
+```bash
+npm install
+deno task dev
+```
+
+Opens a native window against the TanStack Start dev server with hot reload.
+
+## Build
+
+```bash
+npm run build
+deno task build
+```
+
+Produces a native installer under `dist/` for the current platform.
