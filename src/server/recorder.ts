@@ -10,12 +10,23 @@
 //   apt-final  { data_url }
 //   apt-status { state, message, elapsed_secs }
 
-import { encodeBase64 } from "@std/encoding/base64";
 import { AptDecoder, APT_LINE_WIDTH } from "./apt-decoder.ts";
 import { broadcast } from "./events.ts";
 import { recordingsDir } from "./paths.ts";
 
 const CAPTURE_RATE = 60_000; // rtl_fm FM-demod output rate (also the DSP rate)
+
+// `@std/encoding/base64` is a JSR-only specifier: Deno resolves it fine at
+// runtime, but Vite's production bundler, dev-mode dependency scanner, and
+// dev-mode SSR module runner each needed separate, incomplete workarounds
+// to tolerate it. `btoa` is a standard Web API — identical behavior in
+// Deno, Node, and the browser, no bundler special-casing needed. Mirrors
+// the client's own `atob`-based `b64ToBytes` in src/routes/index.tsx.
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
 
 export function freqForSat(sat: string): string | undefined {
   switch (sat) {

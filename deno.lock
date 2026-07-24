@@ -2,7 +2,6 @@
   "version": "5",
   "specifiers": {
     "jsr:@std/assert@1": "1.0.19",
-    "jsr:@std/encoding@1": "1.0.11",
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "npm:@tanstack/react-router@^1.170.18": "1.170.18_react@19.2.8_react-dom@19.2.8__react@19.2.8",
     "npm:@tanstack/react-start@^1.168.32": "1.168.32_react@19.2.8_react-dom@19.2.8__react@19.2.8_vite@8.1.5__@types+node@22.20.1_@types+node@22.20.1",
@@ -23,9 +22,6 @@
       "dependencies": [
         "jsr:@std/internal"
       ]
-    },
-    "@std/encoding@1.0.11": {
-      "integrity": "e7cef2f0b3153bccc17431e7c864a1de03a4b6d9647389c43e08aaa775d37385"
     },
     "@std/internal@1.0.14": {
       "integrity": "291516b3d4c35024d6ffbc0a9df5bf4c64116e05b50012cf846710152d2ffdf7"
@@ -1048,8 +1044,7 @@
   },
   "workspace": {
     "dependencies": [
-      "jsr:@std/assert@1",
-      "jsr:@std/encoding@1"
+      "jsr:@std/assert@1"
     ],
     "packageJson": {
       "dependencies": [
