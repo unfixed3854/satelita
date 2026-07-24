@@ -289,7 +289,7 @@ with:
       <section className="flex flex-wrap items-end gap-4 border-b p-4">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="sat">Satellite</Label>
-          <Select value={sat} onValueChange={setSat} disabled={recording}>
+          <Select value={sat} onValueChange={(value) => value && setSat(value)} disabled={recording}>
             <SelectTrigger id="sat" className="w-[220px]">
               <SelectValue />
             </SelectTrigger>
