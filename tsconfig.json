@@ -2,6 +2,10 @@
   "include": ["**/*.ts", "**/*.tsx", "**/*.d.ts"],
   "exclude": ["node_modules", "src/server/**/*.test.ts"],
   "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    },
     "strict": true,
     "esModuleInterop": true,
     "jsx": "react-jsx",
