@@ -93,3 +93,43 @@ Deno.test("reconstructs synthetic APT image", () => {
   console.log(`decoded ${lines.length} lines, best line correlation = ${best.toFixed(3)}`);
   assert(best > 0.85, `decoded image correlation too low: ${best.toFixed(3)}`);
 });
+
+function noiseAudio(length: number): Float32Array {
+  const out = new Float32Array(length);
+  let seed = 12345;
+  for (let i = 0; i < length; i++) {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    out[i] = (seed / 0x7fffffff) * 2 - 1;
+  }
+  return out;
+}
+
+function runDecoder(audio: Float32Array, fs: number): AptDecoder {
+  const dec = new AptDecoder(fs);
+  const chunkSize = 8192;
+  for (let i = 0; i < audio.length; i += chunkSize) {
+    dec.process(audio.subarray(i, Math.min(i + chunkSize, audio.length)));
+  }
+  return dec;
+}
+
+Deno.test("sync lock separates APT from noise", () => {
+  const fs = 60_000;
+  const img = testImage(APT_LINE_WIDTH, 40);
+  const aptAudio = synthAudio(img, APT_LINE_WIDTH, fs);
+
+  const apt = runDecoder(aptAudio, fs);
+  const noise = runDecoder(noiseAudio(aptAudio.length), fs);
+
+  // Printed so the two normalization constants can be calibrated from
+  // measurement rather than from theory.
+  console.log(
+    `sync raw: apt=${apt.lastSyncRaw.toFixed(3)} noise=${noise.lastSyncRaw.toFixed(3)}`,
+  );
+  console.log(
+    `sync score: apt=${apt.lastSyncScore.toFixed(3)} noise=${noise.lastSyncScore.toFixed(3)}`,
+  );
+
+  assert(apt.lastSyncScore > 0.5, `APT sync score too low: ${apt.lastSyncScore}`);
+  assert(noise.lastSyncScore < 0.2, `noise sync score too high: ${noise.lastSyncScore}`);
+});

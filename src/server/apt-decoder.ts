@@ -17,6 +17,13 @@ const SYNC_SEARCH = 64;
 const SYNC_TPL = 28;
 const TAU = Math.PI * 2;
 
+// Sync-lock normalization. Correlating 28 random taps and taking the best
+// of 65 offsets leaves a noise floor well above zero, so it is subtracted
+// rather than assumed to be 0. Both values are calibrated from the
+// measurements printed by "sync lock separates APT from noise".
+const SYNC_NOISE_FLOOR = 0.5;
+const SYNC_FULL_LOCK = 1.5;
+
 export class AptDecoder {
   private phase = 0;
   private readonly phaseInc: number;
@@ -38,6 +45,12 @@ export class AptDecoder {
 
   private pixbuf: number[] = [];
   linesOut = 0;
+  /** Sync-A correlation from the most recent line alignment, in units of
+   * pixel standard deviation. Exposed for calibration. */
+  lastSyncRaw = 0;
+  /** Normalized 0..1 lock quality: 0 is indistinguishable from noise,
+   * 1 is a clean sync-A pulse train. */
+  lastSyncScore = 0;
 
   constructor(sampleRate: number) {
     this.phaseInc = (TAU * SUBCARRIER_HZ) / sampleRate;
@@ -133,6 +146,13 @@ export class AptDecoder {
         best = o;
       }
     }
+
+    const std = Math.sqrt(Math.max(this.variance, 1e-9));
+    this.lastSyncRaw = bestScore / (SYNC_TPL * std);
+    this.lastSyncScore = Math.min(
+      1,
+      Math.max(0, (this.lastSyncRaw - SYNC_NOISE_FLOOR) / (SYNC_FULL_LOCK - SYNC_NOISE_FLOOR)),
+    );
     return best;
   }
 }
