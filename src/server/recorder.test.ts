@@ -305,3 +305,34 @@ Deno.test("stopRecording clears the session immediately, but busyRecordingId() s
     assertRecordingNotBusy(id);
   });
 });
+
+Deno.test("a readerLoop rejection while rtl_fm is still alive does not crash the process", async () => {
+  await withTempRoot(async () => {
+    const fake = makeFakeRtl();
+    const startP = startRecording("15", "45", 0, () => fake.proc);
+    await waitUntil(() => busyRecordingId() !== null);
+    await startP;
+
+    // `status` is deliberately left pending here, unlike every other test
+    // above — this reproduces N1's exact window: rtl_fm is still "alive"
+    // (nothing has resolved rtl.status yet, so the exit watcher is still
+    // sitting at its first await), and readerLoop rejects anyway — e.g.
+    // rawFile.write hitting ENOSPC partway through a long capture.
+    fake.stdout.error(new Error("simulated ENOSPC in readerLoop"));
+
+    // Give the rejection a tick to propagate through the microtask queue.
+    // If the `.catch` attached at reader's creation in startRecording were
+    // missing, this is where an unhandled rejection would abort the whole
+    // `deno test` process — reaching the rest of this test (and every test
+    // after it in the file) at all is the proof that it doesn't.
+    await new Promise((r) => setTimeout(r, 20));
+
+    // rtl_fm "exits" now (simulating it eventually dying from the same
+    // ENOSPC, or being killed once the operator notices) so the exit
+    // watcher can run its normal cleanup and leave state clean for the
+    // next test.
+    fake.stderr.close();
+    fake.resolveStatus(1);
+    await waitUntil(() => busyRecordingId() === null);
+  });
+});

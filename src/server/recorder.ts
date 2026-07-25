@@ -354,7 +354,18 @@ export async function startRecording(
     });
 
     const rawPath = `${runDir}/signal.raw`;
-    const reader = readerLoop(rtl.stdout, rawPath, startEpoch);
+    // Attached immediately, same reasoning as stderrText just above: a
+    // rejection here (rawFile.write hitting ENOSPC mid-pass, or the
+    // initial Deno.open failing) would otherwise have no handler for the
+    // entire stretch until the watcher below gets past `await rtl.status`
+    // — i.e. the whole time rtl_fm is still alive, potentially many
+    // minutes. Reassigning `reader` to the caught promise (rather than
+    // adding a second `.catch` downstream) means later `await reader`s in
+    // the watcher and in stopRecording just see it resolve normally —
+    // nothing double-handles or double-logs.
+    const reader = readerLoop(rtl.stdout, rawPath, startEpoch).catch((e) => {
+      console.error(`[recorder] reader for ${id} failed:`, e);
+    });
 
     session = { rtl, reader, runDir, id, sat, startEpoch };
     busyId = id;
@@ -367,14 +378,10 @@ export async function startRecording(
     (async () => {
       const status = await rtl.status;
       const stderrMsg = (await stderrText).trim();
-      // Always drain `reader` — previously, on the "nothing captured"
-      // branch below, nobody awaited or caught it once `session` was
-      // nulled, so a readerLoop rejection (e.g. its `finally`'s
-      // `rawFile.close()` throwing) was permanently unhandled. Awaiting a
-      // promise twice (stopRecording may also be awaiting it) is fine.
-      await reader.catch((e) => {
-        console.error(`[recorder] reader for ${id} failed:`, e);
-      });
+      // `reader` can no longer reject by the time we get here — it was
+      // already caught (and logged) at creation above — so this is just
+      // waiting for readerLoop to finish draining, not handling anything.
+      await reader;
 
       // If `session` no longer points at this exact process, stopRecording
       // already handled it — it always clears `session` before killing.
@@ -421,10 +428,13 @@ export async function stopRecording(): Promise<string> {
   } catch {
     // already exited
   }
-  await current.rtl.status.catch(() => {});
-  await current.reader.catch((e) => {
-    console.error(`[recorder] reader for ${current.id} failed:`, e);
+  await current.rtl.status.catch((e) => {
+    console.error(`[recorder] rtl.status for ${current.id} failed:`, e);
   });
+  // `current.reader` can no longer reject — it was already caught (and
+  // logged) at creation in startRecording — so this just waits for
+  // readerLoop to finish draining.
+  await current.reader;
 
   // Fire-and-forget: the decode itself (sox + satdump) can take a while,
   // and the caller only needs to know the capture has stopped, not that

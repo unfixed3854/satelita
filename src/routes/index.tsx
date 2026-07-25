@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Satellite } from "lucide-react";
 
 import {
@@ -49,22 +49,36 @@ function App() {
   // just the first — and reads of `.current` (what ImageStage's save()
   // does) still return the live node, so ImageStage itself needs no
   // changes.
+  //
+  // The accessor object itself is lazily stashed in a *second* useRef,
+  // rather than built with useMemo: React does not guarantee a memo cache
+  // is retained (the docs call it "not a semantic guarantee," only a
+  // performance optimization). If it were ever discarded mid-pass, the
+  // <canvas ref> prop's identity would change, React would detach the old
+  // ref and attach a freshly memoized one — running the setter's
+  // `node.height = 0` and silently wiping the accumulated image in the
+  // middle of a live pass. A ref's `.current` has no such caveat: once set,
+  // it is guaranteed stable for the component instance's lifetime.
   const canvasElRef = useRef<HTMLCanvasElement | null>(null);
-  const canvasRef = useMemo<React.RefObject<HTMLCanvasElement | null>>(() => ({
-    get current() {
-      return canvasElRef.current;
-    },
-    set current(node: HTMLCanvasElement | null) {
-      canvasElRef.current = node;
-      if (node) {
-        node.width = APT_LINE_WIDTH;
-        node.height = 0;
-        ctxRef.current = node.getContext("2d");
-      } else {
-        ctxRef.current = null;
-      }
-    },
-  }), []);
+  const canvasRefHolder = useRef<React.RefObject<HTMLCanvasElement | null> | null>(null);
+  if (canvasRefHolder.current === null) {
+    canvasRefHolder.current = {
+      get current() {
+        return canvasElRef.current;
+      },
+      set current(node: HTMLCanvasElement | null) {
+        canvasElRef.current = node;
+        if (node) {
+          node.width = APT_LINE_WIDTH;
+          node.height = 0;
+          ctxRef.current = node.getContext("2d");
+        } else {
+          ctxRef.current = null;
+        }
+      },
+    };
+  }
+  const canvasRef = canvasRefHolder.current;
 
   const ensureHeight = useCallback((h: number) => {
     const cv = canvasRef.current;
