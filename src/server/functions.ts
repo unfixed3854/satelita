@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { startRecording, stopRecording } from "./recorder.ts";
+import { deleteRecording, listRecordings, type Recording } from "./recordings.ts";
 
 type StartInput = { sat: string; gain: string; device: number };
 
@@ -12,3 +13,15 @@ export const startRecordingFn = createServerFn({ method: "POST" })
 export const stopRecordingFn = createServerFn({ method: "POST" }).handler(async () => {
   return await stopRecording();
 });
+
+export const listRecordingsFn = createServerFn({ method: "GET" }).handler(
+  async (): Promise<Recording[]> => {
+    return await listRecordings();
+  },
+);
+
+export const deleteRecordingFn = createServerFn({ method: "POST" })
+  .validator((data: { id: string }) => data)
+  .handler(async ({ data }) => {
+    await deleteRecording(data.id);
+  });
