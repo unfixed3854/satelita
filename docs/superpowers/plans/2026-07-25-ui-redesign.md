@@ -1001,7 +1001,7 @@ validate them against a strict pattern first."
 
 **Files:**
 - Create: `src/routes/api/recordings.$id.$image.ts`
-- Note: `src/routeTree.gen.ts` regenerates automatically — commit it, do not hand-edit it
+- Note: `src/routeTree.gen.ts` is git-ignored (see `.gitignore`) and regenerates when the dev server runs. Do not hand-edit it and do not try to commit it.
 
 **Interfaces:**
 - Consumes: `readFinalImage` from `../../server/recordings.ts` (Task 4)
@@ -1082,7 +1082,7 @@ Expected: every line reports `404` (or `400`). **No line may report `200`**, and
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/routes/api/recordings.\$id.\$image.ts src/routeTree.gen.ts
+git add src/routes/api/recordings.\$id.\$image.ts
 git commit -m "feat: serve recording images over HTTP
 
 Lets the client fetch and cache satdump's raw_sync/APT-A/APT-B PNGs
