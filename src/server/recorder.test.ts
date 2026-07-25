@@ -162,9 +162,22 @@ interface StatusEvent {
   elapsed_secs: number;
 }
 
+/** Frame the helper below pushes into its own stream to separate history
+ * from live traffic — see subscribeStatus. Not an event events.ts ever
+ * broadcasts. */
+const MARK_EVENT = "test-mark";
+
 /** Subscribes to every `apt-status` broadcast via the real events.ts pub/
  * sub (the same path SSE clients use), decoding SSE frames back into
- * structured events. */
+ * structured events.
+ *
+ * Only events broadcast *after* this call are reported. `subscribe()`
+ * synchronously replays the last apt-status to every new subscriber (so a
+ * client reloading mid-decode learns the current state), which means an
+ * earlier test's final status would otherwise show up here as if this run
+ * had produced it. Pushing a marker frame straight into this stream right
+ * after subscribing draws the line: anything queued ahead of the marker is
+ * the replayed snapshot, everything after it is live. */
 function subscribeStatus(onEvent: (e: StatusEvent) => void): () => void {
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   const stream = new ReadableStream<Uint8Array>({
@@ -173,9 +186,11 @@ function subscribeStatus(onEvent: (e: StatusEvent) => void): () => void {
     },
   });
   subscribe(controller);
+  controller.enqueue(new TextEncoder().encode(`event: ${MARK_EVENT}\ndata: {}\n\n`));
 
   const decoder = new TextDecoder();
   let buffer = "";
+  let live = false;
   void (async () => {
     const reader = stream.getReader();
     try {
@@ -190,7 +205,10 @@ function subscribeStatus(onEvent: (e: StatusEvent) => void): () => void {
           const lines = frame.split("\n");
           const eventLine = lines.find((l) => l.startsWith("event: "));
           const dataLine = lines.find((l) => l.startsWith("data: "));
-          if (eventLine?.slice("event: ".length) === "apt-status" && dataLine) {
+          const name = eventLine?.slice("event: ".length);
+          if (name === MARK_EVENT) {
+            live = true;
+          } else if (live && name === "apt-status" && dataLine) {
             onEvent(JSON.parse(dataLine.slice("data: ".length)));
           }
         }

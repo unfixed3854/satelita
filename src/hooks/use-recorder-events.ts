@@ -37,7 +37,14 @@ export interface RecorderState {
   lines: number;
   /** Id of the recording whose final decode just completed, if any. */
   finishedId: string | null;
+  /** RMS history — the pass envelope, drawn as the filled Level trace. */
   level: number[];
+  /** Peak-magnitude history, drawn as a lighter overlay on the same strip.
+   * Kept separate from `level` because clipping is a peak phenomenon: a
+   * front end pinned at full scale reads peak ≈ 1.0 while RMS sits far
+   * below it (RMS ≥ 0.95 on a [-1,1] signal needs a near-square wave), so
+   * thresholding the CLIP warning on RMS would essentially never fire. */
+  peak: number[];
   sync: number[];
 }
 
@@ -48,6 +55,7 @@ const INITIAL: RecorderState = {
   lines: 0,
   finishedId: null,
   level: [],
+  peak: [],
   sync: [],
 };
 
@@ -100,6 +108,7 @@ export function useRecorderEvents(onLine: (payload: LinePayload) => void): {
         lines: p.lines,
         elapsed: p.elapsed_secs,
         level: pushCapped(prev.level, p.rms),
+        peak: pushCapped(prev.peak, p.peak),
         sync: pushCapped(prev.sync, p.sync),
       }));
     });

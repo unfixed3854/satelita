@@ -1,13 +1,32 @@
 /// <reference lib="deno.ns" />
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import {
   deleteRecording,
   isFinalImage,
   isValidRecordingId,
   listRecordings,
+  parseRecordingId,
   readFinalImage,
   recordingsRoot,
 } from "./recordings.ts";
+
+/** Values a POST can carry that the `{ id: string }` annotation claims are
+ * impossible. The annotation is erased at runtime, so every one of these
+ * really can arrive at the boundary. The array is the dangerous one: it
+ * stringifies to a valid id (so `RegExp.test` and path interpolation both
+ * accept it) while comparing `!==` to the busy id, slipping past the
+ * in-progress guard. */
+const NON_STRING_IDS: unknown[] = [
+  ["noaa15-1785000000"],
+  ["noaa15-1785000000", "ignored"],
+  1785000000,
+  { toString: () => "noaa15-1785000000" },
+  { id: "noaa15-1785000000" },
+  null,
+  undefined,
+  true,
+  Symbol("noaa15-1785000000"),
+];
 
 const ENV_KEYS = ["XDG_DATA_HOME", "HOME", "APPDATA"] as const;
 
@@ -57,6 +76,52 @@ Deno.test("isValidRecordingId accepts run ids and rejects traversal", () => {
   assertEquals(isValidRecordingId("/etc/passwd"), false);
   assertEquals(isValidRecordingId("noaa15"), false);
   assertEquals(isValidRecordingId(""), false);
+});
+
+Deno.test("isValidRecordingId rejects non-string ids that stringify to a valid one", () => {
+  for (const bad of NON_STRING_IDS) {
+    assertEquals(isValidRecordingId(bad), false, `expected a ${typeof bad} id to be rejected`);
+  }
+});
+
+Deno.test("parseRecordingId accepts a well-formed payload and rejects everything else", () => {
+  assertEquals(parseRecordingId({ id: "noaa15-1784827259" }), "noaa15-1784827259");
+
+  for (const bad of NON_STRING_IDS) {
+    assertThrows(() => parseRecordingId({ id: bad }), Error, "Invalid recording id");
+  }
+  // Malformed strings and missing/!object payloads fail the same way.
+  for (const bad of [{ id: ".." }, { id: "" }, {}, null, undefined, "noaa15-1784827259"]) {
+    assertThrows(() => parseRecordingId(bad), Error, "Invalid recording id");
+  }
+});
+
+Deno.test("deleteRecording refuses a non-string id that stringifies to a real directory", async () => {
+  await withTempRoot(async (root) => {
+    await makeRecording(root, "noaa15-1785000000", { images: ["raw_sync"] });
+
+    for (const bad of NON_STRING_IDS) {
+      await assertRejects(
+        // Exactly what an erased validator lets through: the declared type
+        // says string, the wire says otherwise.
+        () => deleteRecording(bad as string),
+        Error,
+        "Invalid recording id",
+      );
+    }
+
+    // The directory the array id resolved to is still there, untouched.
+    assertEquals((await listRecordings()).map((r) => r.id), ["noaa15-1785000000"]);
+  });
+});
+
+Deno.test("readFinalImage refuses non-string ids", async () => {
+  await withTempRoot(async (root) => {
+    await makeRecording(root, "noaa15-1785000000", { images: ["APT-A"] });
+    for (const bad of NON_STRING_IDS) {
+      assertEquals(await readFinalImage(bad as string, "APT-A"), null);
+    }
+  });
 });
 
 Deno.test("isFinalImage allows only the three satdump outputs", () => {

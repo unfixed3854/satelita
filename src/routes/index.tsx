@@ -175,6 +175,16 @@ function App() {
     void refreshRecordings();
   }, [state.phase, refreshRecordings]);
 
+  // Latest-value refs for the guard in the finishedId effect below. Read
+  // through refs rather than added to that effect's dependency list: the
+  // effect must fire once per *finished pass*, and adding `source` or
+  // `phase` would re-run it on every unrelated stage switch or status
+  // change, re-hijacking the stage each time.
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
+  const phaseRef = useRef(state.phase);
+  phaseRef.current = state.phase;
+
   // A pass finished decoding: pick up its files and show them. If satdump
   // produced nothing the stage stays live, showing the lines this run did
   // decode — they are the only result it produced.
@@ -185,7 +195,20 @@ function App() {
         const fresh = await listRecordingsFn();
         setRecordings(fresh);
         const match = fresh.find((r) => r.id === state.finishedId);
-        if (match?.complete) setSource({ kind: "recording", id: match.id, images: match.images });
+        if (!match?.complete) return;
+
+        // Only take over the stage if it is showing the live view and no
+        // pass is currently being captured. `apt-final` can land long after
+        // the pass that produced it: stopRecording returns as soon as
+        // capture ends, so sox/satdump keep running while the user is free
+        // to start pass 2. Without this guard, pass 1's final image would
+        // replace the live canvas mid-pass — unmounting it, nulling the 2D
+        // context, and leaving the rest of pass 2 undrawn. It would equally
+        // yank the stage away from a past recording the user opened to look
+        // at. The Live button on the stage is the way back in either case.
+        if (sourceRef.current.kind !== "live" || phaseRef.current === "recording") return;
+
+        setSource({ kind: "recording", id: match.id, images: match.images });
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       }
@@ -260,6 +283,7 @@ function App() {
 
         <SignalPanel
           level={state.level}
+          peak={state.peak}
           sync={state.sync}
           lines={state.lines}
           recording={recording}
@@ -290,6 +314,7 @@ function App() {
           recording={recording}
           error={error}
           onDismissError={() => setError(null)}
+          onGoLive={() => setSource({ kind: "live" })}
         />
 
         <div

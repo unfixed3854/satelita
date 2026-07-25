@@ -3,7 +3,12 @@ import { useEffect, useRef } from "react";
 import { SIGNAL_HISTORY } from "@/hooks/use-recorder-events";
 
 /** Peak level above which the front end is effectively clipping and the
- * pass is being quietly ruined. */
+ * pass is being quietly ruined.
+ *
+ * Thresholded on *peak*, never RMS. A saturated front end pins peak at
+ * ~1.0 while RMS stays far below — reaching an RMS of 0.95 on a [-1, 1]
+ * signal takes a near-square wave, which APT audio never is — so an
+ * RMS-based test would leave this warning permanently dark. */
 const CLIP_THRESHOLD = 0.95;
 
 /**
@@ -33,15 +38,21 @@ function syncLockState(score: number): SyncLockState {
   return "NO LOCK";
 }
 
-/** A scrolling history strip. Values are 0..1, oldest first. */
+/** A scrolling history strip. Values are 0..1, oldest first.
+ *
+ * `values` is drawn as a filled trace; the optional `overlay` is drawn as a
+ * lighter line on the same axes, for a companion series that shares the
+ * scale (peak over RMS). */
 function Strip({
   values,
+  overlay,
   color,
   label,
   readout,
   readoutClassName,
 }: {
   values: number[];
+  overlay?: number[];
   color: string;
   label: string;
   readout: string;
@@ -105,7 +116,27 @@ function Strip({
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
     ctx.stroke();
-  }, [values, color]);
+
+    // Peak rides above RMS, so it is drawn last (on top) and unfilled —
+    // a thin, half-opacity line reads as a ceiling over the envelope
+    // rather than as a second competing trace. Aligned to the right edge
+    // by its own length, so a brief mismatch in sample counts between the
+    // two series still lines up at the newest sample.
+    if (overlay && overlay.length > 0) {
+      const ox0 = cssWidth - overlay.length * step;
+      ctx.globalAlpha = 0.5;
+      ctx.beginPath();
+      overlay.forEach((v, i) => {
+        const x = ox0 + i * step;
+        if (i === 0) ctx.moveTo(x, yFor(v));
+        else ctx.lineTo(x, yFor(v));
+      });
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+  }, [values, overlay, color]);
 
   return (
     <div className="flex flex-col gap-1">
@@ -121,16 +152,20 @@ function Strip({
 }
 
 export interface SignalPanelProps {
+  /** RMS history — the filled Level trace. */
   level: number[];
+  /** Peak history — the lighter overlay, and what CLIP is thresholded on. */
+  peak: number[];
   sync: number[];
   lines: number;
   recording: boolean;
 }
 
-export function SignalPanel({ level, sync, lines, recording }: SignalPanelProps) {
+export function SignalPanel({ level, peak, sync, lines, recording }: SignalPanelProps) {
   const latestLevel = level.at(-1) ?? 0;
+  const latestPeak = peak.at(-1) ?? 0;
   const latestSync = sync.at(-1) ?? 0;
-  const clipping = latestLevel >= CLIP_THRESHOLD;
+  const clipping = latestPeak >= CLIP_THRESHOLD;
   const lockState = syncLockState(latestSync);
   const locked = lockState === "LOCK";
 
@@ -142,6 +177,7 @@ export function SignalPanel({ level, sync, lines, recording }: SignalPanelProps)
     <div className="flex flex-col gap-3">
       <Strip
         values={level}
+        overlay={peak}
         color={clipping ? warnColor : signalColor}
         label="Level"
         readout={clipping ? "CLIP" : latestLevel.toFixed(2)}

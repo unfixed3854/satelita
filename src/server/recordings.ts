@@ -28,9 +28,29 @@ export interface Recording {
 }
 
 /** Ids arrive from the client and are concatenated into filesystem paths,
- * so this is a correctness requirement, not defense in depth. */
-export function isValidRecordingId(id: string): boolean {
-  return ID_PATTERN.test(id);
+ * so this is a correctness requirement, not defense in depth.
+ *
+ * Takes `unknown` on purpose. The value reaching here has only ever been
+ * *typed* as a string — server-fn validators are erased at runtime, so a
+ * POST carrying `{"id": ["noaa15-1785000000"]}` arrives as a real array.
+ * `RegExp.test` would coerce that to the same characters and pass, while
+ * every `===` comparison against it (notably `assertRecordingNotBusy`)
+ * would be false — letting a non-string sneak past the busy guard and
+ * still resolve to a real directory. Narrowing to `string` here closes
+ * that asymmetry for every caller at once. */
+export function isValidRecordingId(id: unknown): id is string {
+  return typeof id === "string" && ID_PATTERN.test(id);
+}
+
+/** Narrow an untrusted server-fn payload to a valid recording id, or throw.
+ * Lives here rather than inline in functions.ts so the boundary check is
+ * unit testable without going through the `createServerFn` wrapper. */
+export function parseRecordingId(data: unknown): string {
+  const id = (data as { id?: unknown } | null | undefined)?.id;
+  if (!isValidRecordingId(id)) {
+    throw new Error(`Invalid recording id: ${typeof id === "string" ? id : typeof id}`);
+  }
+  return id;
 }
 
 export function isFinalImage(name: string): name is FinalImage {
@@ -118,7 +138,12 @@ export async function listRecordings(): Promise<Recording[]> {
 }
 
 export async function deleteRecording(id: string): Promise<void> {
-  if (!isValidRecordingId(id)) throw new Error(`Invalid recording id: ${id}`);
+  // `id` is only *declared* as a string — see isValidRecordingId's note on
+  // erased validators. Interpolating an arbitrary object into the message
+  // could itself throw, so report the type instead when it isn't a string.
+  if (!isValidRecordingId(id)) {
+    throw new Error(`Invalid recording id: ${typeof id === "string" ? id : typeof id}`);
+  }
   await Deno.remove(`${recordingsRoot()}/${id}`, { recursive: true });
 }
 

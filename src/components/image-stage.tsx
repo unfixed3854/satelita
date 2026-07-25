@@ -21,6 +21,17 @@ const CHANNELS: { id: ChannelMode; label: string }[] = [
   { id: "b", label: "B" },
 ];
 
+/** Shared by the segmented controls and the standalone Live button below,
+ * so the toolbar reads as one set of controls rather than two idioms. */
+function segmentClass(active: boolean): string {
+  return cn(
+    "rounded border px-2 py-0.5 text-[11px] transition-colors",
+    active
+      ? "border-signal/40 bg-signal/15 text-signal"
+      : "border-border text-muted-foreground hover:text-foreground",
+  );
+}
+
 function SegmentedControl<T extends string>({
   options,
   value,
@@ -40,12 +51,7 @@ function SegmentedControl<T extends string>({
           type="button"
           onClick={() => onChange(o.id)}
           aria-pressed={value === o.id}
-          className={cn(
-            "rounded border px-2 py-0.5 text-[11px] transition-colors",
-            value === o.id
-              ? "border-signal/40 bg-signal/15 text-signal"
-              : "border-border text-muted-foreground hover:text-foreground",
-          )}
+          className={segmentClass(value === o.id)}
         >
           {o.label}
         </button>
@@ -62,6 +68,10 @@ export interface ImageStageProps {
   recording: boolean;
   error: string | null;
   onDismissError: () => void;
+  /** Return the stage to the live decode. Without this the only ways back
+   * were starting a new pass or deleting the recording on screen, so
+   * opening a past recording mid-decode was a one-way trip. */
+  onGoLive: () => void;
 }
 
 export function ImageStage({
@@ -72,6 +82,7 @@ export function ImageStage({
   recording,
   error,
   onDismissError,
+  onGoLive,
 }: ImageStageProps) {
   const [zoom, setZoom] = useState<ZoomMode>("fit-width");
   const [channel, setChannel] = useState<ChannelMode>("both");
@@ -186,6 +197,21 @@ export function ImageStage({
       </div>
 
       <div className="flex items-center gap-4 border-t border-border px-4 py-2">
+        {/* Only rendered while it would do something — when the stage is
+            already live it would be an inert control sitting next to two
+            live ones. */}
+        {!live && (
+          <div className="flex items-center gap-1" role="group" aria-label="Stage source">
+            <button
+              type="button"
+              onClick={onGoLive}
+              className={segmentClass(false)}
+              title="Return the stage to the live decode"
+            >
+              Live
+            </button>
+          </div>
+        )}
         <SegmentedControl options={ZOOMS} value={zoom} onChange={setZoom} label="Zoom" />
         <SegmentedControl options={CHANNELS} value={channel} onChange={setChannel} label="Channel" />
         <button
