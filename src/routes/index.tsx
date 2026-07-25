@@ -1,42 +1,21 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
-import { startRecordingFn, stopRecordingFn } from "../server/functions";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Satellite } from "lucide-react";
+
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-
-type LinePayload = { start_line: number; width: number; count: number; pixels_b64: string };
-type FinalPayload = { data_url: string };
-type StatusPayload = { state: string; message: string; elapsed_secs: number };
-
-const SATS = [
-  { id: "15", label: "NOAA-15 · 137.620 MHz" },
-  { id: "18", label: "NOAA-18 · 137.9125 MHz" },
-  { id: "19", label: "NOAA-19 · 137.100 MHz" },
-];
-
-const CANVAS_WIDTH = 2080;
-
-function fmtElapsed(s: number) {
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  return `${m}:${String(r).padStart(2, "0")}`;
-}
-
-function badgeVariant(state: string): "default" | "secondary" | "outline" {
-  if (state === "recording") return "default";
-  if (state === "stopped") return "outline";
-  return "secondary";
-}
+  deleteRecordingFn,
+  listRecordingsFn,
+  startRecordingFn,
+  stopRecordingFn,
+} from "../server/functions";
+import type { Recording } from "@/server/recordings";
+import { CapturePanel, SATS } from "@/components/capture-panel";
+import { ImageStage, type StageSource } from "@/components/image-stage";
+import { RecordingsPanel } from "@/components/recordings-panel";
+import { SignalPanel } from "@/components/signal-panel";
+import { StatusHeader } from "@/components/status-header";
+import { type LinePayload, useRecorderEvents } from "@/hooks/use-recorder-events";
+import { APT_LINE_WIDTH } from "@/lib/apt";
 
 function b64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64);
@@ -53,33 +32,29 @@ function App() {
   const [sat, setSat] = useState("15");
   const [gain, setGain] = useState("45");
   const [device, setDevice] = useState("0");
-
-  const [recording, setRecording] = useState(false);
-  const [status, setStatus] = useState("Idle — pick a satellite and press Record.");
-  const [statusState, setStatusState] = useState("idle");
-  const [elapsed, setElapsed] = useState(0);
-  const [lines, setLines] = useState(0);
-  const [finalUrl, setFinalUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [recordings, setRecordings] = useState<Recording[]>([]);
+  const [source, setSource] = useState<StageSource>({ kind: "live" });
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
 
-  function ensureHeight(h: number) {
-    const cv = canvasRef.current!;
-    const ctx = ctxRef.current!;
-    if (cv.height >= h) return;
+  const ensureHeight = useCallback((h: number) => {
+    const cv = canvasRef.current;
+    const ctx = ctxRef.current;
+    if (!cv || !ctx || cv.height >= h) return;
     const prev = cv.height > 0 ? ctx.getImageData(0, 0, cv.width, cv.height) : null;
     cv.height = h + 240;
     if (prev) ctx.putImageData(prev, 0, 0);
-  }
+  }, []);
 
-  function drawRows(p: LinePayload) {
+  const drawRows = useCallback((p: LinePayload) => {
     const ctx = ctxRef.current;
     if (!ctx) return;
     const gray = b64ToBytes(p.pixels_b64);
     ensureHeight(p.start_line + p.count);
+
     const img = ctx.createImageData(p.width, p.count);
     for (let i = 0; i < p.width * p.count; i++) {
       const g = gray[i];
@@ -89,55 +64,90 @@ function App() {
       img.data[i * 4 + 3] = 255;
     }
     ctx.putImageData(img, 0, p.start_line);
+
+    // Follow the newest lines only when already at the bottom, so
+    // scrolling up to inspect earlier lines is not undone twice a second.
     const wrap = wrapRef.current;
-    if (wrap) wrap.scrollTop = wrap.scrollHeight;
-  }
+    if (wrap) {
+      const atBottom = wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 80;
+      if (atBottom) wrap.scrollTop = wrap.scrollHeight;
+    }
+  }, [ensureHeight]);
+
+  const { state, reset, setPhase } = useRecorderEvents(drawRows);
+  const recording = state.phase === "recording";
+
+  const refreshRecordings = useCallback(async () => {
+    try {
+      setRecordings(await listRecordingsFn());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  useEffect(() => {
+    const cv = canvasRef.current;
+    if (!cv) return;
+    cv.width = APT_LINE_WIDTH;
+    cv.height = 0;
+    ctxRef.current = cv.getContext("2d");
+  }, []);
+
+  useEffect(() => {
+    void refreshRecordings();
+  }, [refreshRecordings]);
+
+  // The server can fail a pass after start already succeeded — e.g. rtl_fm
+  // rejecting a device that doesn't exist. That surfaces as an apt-status
+  // broadcast straight to "idle" (recording -> decoding -> stopped is the
+  // only other path, so this transition is unambiguous), carrying the
+  // failure in `message`. Route it into the dismissible error banner rather
+  // than state.message: reset()'s "keep the previous message" behavior is
+  // for the start/stop try/catch paths below, not for this.
+  const prevPhaseRef = useRef(state.phase);
+  useEffect(() => {
+    if (prevPhaseRef.current === "recording" && state.phase === "idle") {
+      setError(state.message);
+    }
+    prevPhaseRef.current = state.phase;
+  }, [state.phase, state.message]);
+
+  // A pass finished decoding: pick up its files and show them. If satdump
+  // produced nothing the stage stays live, showing the lines this run did
+  // decode — they are the only result it produced.
+  useEffect(() => {
+    if (!state.finishedId) return;
+    void (async () => {
+      try {
+        const fresh = await listRecordingsFn();
+        setRecordings(fresh);
+        const match = fresh.find((r) => r.id === state.finishedId);
+        if (match?.complete) setSource({ kind: "recording", id: match.id, images: match.images });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    })();
+  }, [state.finishedId]);
 
   function resetCanvas() {
     const cv = canvasRef.current;
     const ctx = ctxRef.current;
     if (!cv || !ctx) return;
-    cv.height = 0;
     ctx.clearRect(0, 0, cv.width, cv.height);
-  }
-
-  useEffect(() => {
-    const cv = canvasRef.current!;
-    cv.width = CANVAS_WIDTH;
     cv.height = 0;
-    ctxRef.current = cv.getContext("2d");
-
-    const source = new EventSource("/api/recorder-events");
-    source.addEventListener("apt-line", (e) => {
-      const payload: LinePayload = JSON.parse((e as MessageEvent).data);
-      drawRows(payload);
-      setLines(payload.start_line + payload.count);
-    });
-    source.addEventListener("apt-final", (e) => {
-      const payload: FinalPayload = JSON.parse((e as MessageEvent).data);
-      setFinalUrl(payload.data_url);
-    });
-    source.addEventListener("apt-status", (e) => {
-      const payload: StatusPayload = JSON.parse((e as MessageEvent).data);
-      setStatus(payload.message);
-      setStatusState(payload.state);
-      setElapsed(payload.elapsed_secs);
-      if (payload.state === "stopped") setRecording(false);
-    });
-
-    return () => source.close();
-  }, []);
+  }
 
   async function start() {
     setError(null);
-    setFinalUrl(null);
-    setLines(0);
     resetCanvas();
+    reset();
+    setSource({ kind: "live" });
     try {
       await startRecordingFn({ data: { sat, gain, device: Number(device) } });
-      setRecording(true);
+      setPhase("recording");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setPhase("idle");
     }
   }
 
@@ -146,98 +156,82 @@ function App() {
       await stopRecordingFn();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setRecording(false);
+      setPhase("stopped");
     }
   }
 
+  async function handleDelete(id: string) {
+    try {
+      await deleteRecordingFn({ data: { id } });
+      if (source.kind === "recording" && source.id === id) setSource({ kind: "live" });
+      await refreshRecordings();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  const current = SATS.find((s) => s.id === sat) ?? SATS[0];
+
   return (
-    <main className="flex h-screen flex-col">
-      <header className="flex items-center gap-4 border-b p-4">
-        <h1 className="text-base font-semibold">🛰️ satelita — NOAA APT live</h1>
-        <div className="ml-auto flex items-center gap-2">
-          {recording && <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-destructive" />}
-          <Badge variant={badgeVariant(statusState)}>{status}</Badge>
-          {recording && <span className="font-semibold tabular-nums">{fmtElapsed(elapsed)}</span>}
+    <main className="grid h-screen grid-cols-[17rem_1fr] overflow-hidden">
+      <aside className="flex min-h-0 flex-col gap-5 overflow-y-auto border-r border-border bg-sidebar p-4">
+        <div className="flex items-center gap-2">
+          <Satellite className="size-4 text-signal" />
+          <h1 className="font-mono text-sm tracking-[0.2em] uppercase">satelita</h1>
         </div>
-      </header>
 
-      <section className="flex flex-wrap items-end gap-4 border-b p-4">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="sat">Satellite</Label>
-          <Select value={sat} onValueChange={(value) => value && setSat(value)} disabled={recording}>
-            <SelectTrigger id="sat" className="w-[220px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {SATS.map((s) => (
-                <SelectItem key={s.id} value={s.id}>
-                  {s.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="gain">Gain (dB)</Label>
-          <Input
-            id="gain"
-            value={gain}
-            onChange={(e) => setGain(e.target.value)}
-            disabled={recording}
-            placeholder="45 or agc"
-          />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="device">Device</Label>
-          <Input
-            id="device"
-            className="w-12"
-            value={device}
-            onChange={(e) => setDevice(e.target.value)}
-            disabled={recording}
-          />
-        </div>
-        {!recording ? (
-          <Button onClick={start}>● Record</Button>
-        ) : (
-          <Button variant="destructive" onClick={stop}>
-            ■ Stop
-          </Button>
-        )}
-        <span className="text-xs text-muted-foreground tabular-nums">{lines} lines</span>
-      </section>
-
-      {error && (
-        <Alert variant="destructive" className="mx-4 mt-3 w-auto">
-          <AlertDescription>⚠ {error}</AlertDescription>
-        </Alert>
-      )}
-
-      <section className="flex flex-1 items-start justify-center overflow-auto p-4" ref={wrapRef}>
-        <canvas
-          ref={canvasRef}
-          className="w-full border bg-black"
-          style={{ display: finalUrl ? "none" : "block", imageRendering: "pixelated" }}
+        <CapturePanel
+          sat={sat}
+          onSatChange={setSat}
+          gain={gain}
+          onGainChange={setGain}
+          device={device}
+          onDeviceChange={setDevice}
+          recording={recording}
+          onStart={start}
+          onStop={stop}
         />
-        {finalUrl && (
-          <div className="w-full">
-            <div className="mb-1.5 text-sm font-medium">Final image (satdump — calibrated)</div>
-            <img
-              className="w-full border bg-black"
-              style={{ imageRendering: "pixelated" }}
-              src={finalUrl}
-              alt="Final APT image"
-            />
-          </div>
-        )}
-        {lines === 0 && !finalUrl && (
-          <div className="mt-12 max-w-[420px] text-center text-muted-foreground">
-            {recording
-              ? "Waiting for the first decoded lines… the image builds top-to-bottom in real time."
-              : "No image yet. Start a recording when the satellite is above the horizon."}
-          </div>
-        )}
+
+        <SignalPanel
+          level={state.level}
+          sync={state.sync}
+          lines={state.lines}
+          recording={recording}
+        />
+
+        <RecordingsPanel
+          recordings={recordings}
+          selectedId={source.kind === "recording" ? source.id : null}
+          openDisabled={recording}
+          onOpen={(r) => setSource({ kind: "recording", id: r.id, images: r.images })}
+          onDelete={handleDelete}
+        />
+      </aside>
+
+      <section className="flex min-h-0 flex-col">
+        <StatusHeader
+          phase={state.phase}
+          satellite={current.label}
+          freq={current.freq}
+          elapsed={state.elapsed}
+        />
+
+        <ImageStage
+          source={source}
+          canvasRef={canvasRef}
+          wrapRef={wrapRef}
+          lines={state.lines}
+          recording={recording}
+          error={error}
+          onDismissError={() => setError(null)}
+        />
+
+        <div
+          className="truncate border-t border-border px-4 py-1.5 font-mono text-[11px] text-muted-foreground"
+          title={state.message}
+        >
+          {state.message}
+        </div>
       </section>
     </main>
   );
