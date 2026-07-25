@@ -20,6 +20,12 @@ export const SATS = [
   { id: "19", label: "NOAA-19", freq: "137.100 MHz" },
 ];
 
+// `Select.Root`'s `items` prop is how Base UI resolves the label shown in the
+// trigger (via `resolveSelectedLabel`): without it, a plain string value is
+// rendered as-is, so the trigger would show the raw id ("15") instead of the
+// satellite name. See node_modules/@base-ui/react/internals/resolveValueLabel.mjs.
+const SAT_ITEMS = SATS.map((s) => ({ value: s.id, label: s.label }));
+
 /** Tuner gain range for the R820T/R820T2 front end rtl_fm drives. rtl_fm
  * snaps to the nearest supported step, so a continuous slider is fine. */
 const GAIN_MIN = 0;
@@ -58,13 +64,38 @@ export function CapturePanel({
     ? Math.min(GAIN_MAX, Math.max(GAIN_MIN, numericGain))
     : 45;
 
+  // Tracks the last value that was a valid, in-range number so the field can
+  // recover on blur if the user leaves it empty or non-numeric, instead of
+  // shipping "" or "abc" to rtl_fm as -g.
+  const lastValidGain = useRef("45");
+  if (!agc && gain.trim() !== "" && Number.isFinite(Number(gain))) {
+    lastValidGain.current = String(
+      Math.min(GAIN_MAX, Math.max(GAIN_MIN, Number(gain))),
+    );
+  }
+
+  const handleGainBlur = () => {
+    if (agc) return;
+    const parsed = Number(gain);
+    if (gain.trim() !== "" && Number.isFinite(parsed)) {
+      onGainChange(String(Math.min(GAIN_MAX, Math.max(GAIN_MIN, parsed))));
+    } else {
+      onGainChange(lastValidGain.current);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="sat" className="text-xs tracking-wide text-muted-foreground uppercase">
           Satellite
         </Label>
-        <Select value={sat} onValueChange={(v) => v && onSatChange(v)} disabled={recording}>
+        <Select
+          value={sat}
+          onValueChange={(v) => v && onSatChange(v)}
+          disabled={recording}
+          items={SAT_ITEMS}
+        >
           <SelectTrigger id="sat" className="w-full">
             <SelectValue />
           </SelectTrigger>
@@ -118,6 +149,7 @@ export function CapturePanel({
             id="gain"
             value={agc ? "agc" : gain}
             onChange={(e) => onGainChange(e.target.value)}
+            onBlur={handleGainBlur}
             disabled={recording || agc}
             className="w-16 text-center font-mono tabular-nums"
             aria-label="Gain value"
