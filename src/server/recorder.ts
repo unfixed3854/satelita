@@ -99,6 +99,30 @@ interface Session {
 let session: Session | null = null;
 let starting = false;
 
+/** Drain a child's stderr into its log file while also returning the text,
+ * so a failure (e.g. rtl_fm rejecting an unknown device) can be reported
+ * back to the client instead of only ending up in a log file nobody reads. */
+async function captureStderr(
+  stream: ReadableStream<Uint8Array>,
+  logFile: Deno.FsFile,
+): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done || !value) break;
+      await logFile.write(value);
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    reader.releaseLock();
+    logFile.close();
+  }
+  return text;
+}
+
 async function readerLoop(
   stdout: ReadableStream<Uint8Array>,
   rawPath: string,
@@ -230,12 +254,29 @@ export async function startRecording(sat: string, gain: string, device: number):
     }
 
     const rtlLog = await Deno.open(`${runDir}/rtl.log`, { create: true, write: true, truncate: true });
-    rtl.stderr.pipeTo(rtlLog.writable).catch(() => {});
+    const stderrText = captureStderr(rtl.stderr, rtlLog);
 
     const rawPath = `${runDir}/signal.raw`;
     const reader = readerLoop(rtl.stdout, rawPath, startEpoch);
 
     session = { rtl, reader, runDir, id, sat, startEpoch };
+
+    // rtl_fm can reject a bad device (e.g. one that doesn't exist) the
+    // moment it starts, closing its streams almost immediately. Neither
+    // readerLoop (an empty stdout) nor the caller of startRecording (the
+    // spawn itself succeeded) notices that on its own, so watch the child's
+    // exit here and report it if nobody has already called stopRecording —
+    // stopRecording always clears `session` before killing, so this branch
+    // only fires for an exit nobody asked for.
+    (async () => {
+      const status = await rtl.status;
+      const stderrMsg = (await stderrText).trim();
+      if (session?.rtl === rtl) {
+        session = null;
+        const reason = stderrMsg || `rtl_fm exited unexpectedly (code ${status.code}).`;
+        emitStatus("idle", `rtl_fm failed: ${reason}`, nowSecs() - startEpoch);
+      }
+    })();
 
     emitStatus("recording", `Recording NOAA-${sat} on ${freq}`, 0);
     return `Recording NOAA-${sat} (${freq})`;
@@ -273,6 +314,14 @@ export async function stopRecording(): Promise<string> {
   })();
 
   return current.runDir;
+}
+
+/** Id of the recording currently being written to, or null when idle.
+ * Used to stop the active run's directory from being deleted out from
+ * under it — the directory exists but has no decode/ yet, so it is
+ * otherwise indistinguishable from an aborted run. */
+export function activeSessionId(): string | null {
+  return session?.id ?? null;
 }
 
 /** Kill any active session's SDR process (used on process exit). */
