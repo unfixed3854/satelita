@@ -12,12 +12,9 @@
 //   apt-status { state, message, elapsed_secs }
 
 import { AptDecoder, APT_LINE_WIDTH } from "./apt-decoder.ts";
+import { CAPTURE_RATE } from "./constants.ts";
 import { broadcast } from "./events.ts";
 import { recordingsDir } from "./paths.ts";
-
-/** rtl_fm FM-demod output rate — also the DSP rate, and the divisor that
- * turns a recording's signal.raw byte count back into its duration. */
-export const CAPTURE_RATE = 60_000;
 
 // `@std/encoding/base64` is a JSR-only specifier: Deno resolves it fine at
 // runtime, but Vite's production bundler, dev-mode dependency scanner, and
@@ -290,9 +287,14 @@ export function abortActiveSession(): void {
   }
 }
 
-globalThis.addEventListener("unload", () => {
-  abortActiveSession();
-});
+// `vite dev` runs this module under Node, where `globalThis.addEventListener`
+// doesn't exist — this listener only matters in the Deno desktop runtime, so
+// guard it the same way the signal listeners below are already guarded.
+if (typeof globalThis.addEventListener === "function") {
+  globalThis.addEventListener("unload", () => {
+    abortActiveSession();
+  });
+}
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   try {

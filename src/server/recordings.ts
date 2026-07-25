@@ -8,8 +8,8 @@
 // run has an empty decode/ but still holds a signal.raw worth ~7 MB per
 // minute, which is exactly what makes deletion worth offering.
 
+import { CAPTURE_RATE } from "./constants.ts";
 import { appDataDir } from "./paths.ts";
-import { CAPTURE_RATE } from "./recorder.ts";
 
 const ID_PATTERN = /^noaa\d+-\d+$/;
 
