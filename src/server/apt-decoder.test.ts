@@ -133,3 +133,58 @@ Deno.test("sync lock separates APT from noise", () => {
   assert(apt.lastSyncScore > 0.5, `APT sync score too low: ${apt.lastSyncScore}`);
   assert(noise.lastSyncScore < 0.2, `noise sync score too high: ${noise.lastSyncScore}`);
 });
+
+Deno.test("sync score behaves as a graduated meter under partial noise", () => {
+  const fs = 60_000;
+  const img = testImage(APT_LINE_WIDTH, 40);
+  const aptAudio = synthAudio(img, APT_LINE_WIDTH, fs);
+  const noise = noiseAudio(aptAudio.length);
+
+  // Additive white noise mixed into clean synthetic APT at increasing
+  // relative amplitudes. The LCG that produces `noise` is fixed-seed, so
+  // this sweep is deterministic across runs.
+  const noiseAmps = [0, 0.25, 0.5, 1.0, 2.0];
+  const results = noiseAmps.map((amp) => {
+    const mixed = new Float32Array(aptAudio.length);
+    for (let i = 0; i < mixed.length; i++) {
+      mixed[i] = aptAudio[i] + amp * noise[i];
+    }
+    const dec = runDecoder(mixed, fs);
+    return { amp, raw: dec.lastSyncRaw, score: dec.lastSyncScore };
+  });
+
+  console.log("noise amp -> sync raw -> sync score");
+  for (const r of results) {
+    console.log(`  ${r.amp.toFixed(2)} -> raw=${r.raw.toFixed(3)} score=${r.score.toFixed(3)}`);
+  }
+
+  // 1. lastSyncRaw should decrease (or hold, within tolerance) as noise
+  // grows. The tolerance is wider than plain EMA jitter would need: once
+  // noise fully swamps the signal (amp >= 1.0 here), "raw" stops trending
+  // down and instead fluctuates around the empirical noise floor, because
+  // it is the max over 65 offsets — an order statistic that converges to a
+  // floor rather than continuing toward -Infinity as the true signal
+  // vanishes further. That is a property of the metric, not a bug; both
+  // ends of that particular jump are already saturated at score 0.000, so
+  // it doesn't affect the UI, but it's real and worth tolerance for.
+  const tolerance = 0.1;
+  for (let i = 1; i < results.length; i++) {
+    const prev = results[i - 1];
+    const cur = results[i];
+    assert(
+      cur.raw <= prev.raw + tolerance,
+      `sync raw not monotonically decreasing: amp=${prev.amp} raw=${prev.raw.toFixed(3)} -> ` +
+        `amp=${cur.amp} raw=${cur.raw.toFixed(3)}`,
+    );
+  }
+
+  // 2. At least one intermediate SNR should land strictly inside the rails,
+  // i.e. the meter reads a genuine middle value rather than snapping
+  // between 0 and 1.
+  const midRange = results.filter((r) => r.score > 0.05 && r.score < 0.95);
+  assert(
+    midRange.length > 0,
+    `no intermediate noise amplitude produced a mid-range score; all scores ` +
+      `saturated at the rails: ${JSON.stringify(results)}`,
+  );
+});
