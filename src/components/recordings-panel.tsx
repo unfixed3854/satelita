@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { HardDrive, ImageOff, Trash2 } from "lucide-react";
 
 import type { Recording } from "@/server/recordings";
@@ -24,6 +24,34 @@ export function RecordingsPanel({
 }: RecordingsPanelProps) {
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const totalBytes = recordings.reduce((sum, r) => sum + r.bytes, 0);
+
+  // Focus management for the two-step delete confirm. The trash button and
+  // the Delete/Cancel span are mutually-exclusive subtrees, so React
+  // unmounts one and mounts the other on every transition — without this,
+  // the browser drops focus to <body> and a keyboard/screen-reader user
+  // loses their place in the list on the one workflow that destroys data.
+  const trashRefs = useRef(new Map<string, HTMLButtonElement>());
+  const cancelRefs = useRef(new Map<string, HTMLButtonElement>());
+  // What caused the most recent confirmingId change, set synchronously by
+  // the handler below and consumed by the effect once React has committed
+  // the resulting DOM. "delete" is intentionally not restored to — that
+  // row is about to disappear from the recordings list.
+  const lastActionRef = useRef<{ type: "open" | "cancel"; id: string } | { type: "delete" } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    const action = lastActionRef.current;
+    if (!action) return;
+    if (action.type === "open") {
+      // Land on Cancel, not Delete — Cancel is the safe default, and
+      // landing focus on a destructive control invites an accidental
+      // second Enter press.
+      cancelRefs.current.get(action.id)?.focus();
+    } else if (action.type === "cancel") {
+      trashRefs.current.get(action.id)?.focus();
+    }
+  }, [confirmingId]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
@@ -85,16 +113,26 @@ export function RecordingsPanel({
                           <button
                             type="button"
                             onClick={() => {
+                              lastActionRef.current = { type: "delete" };
                               onDelete(r.id);
                               setConfirmingId(null);
                             }}
+                            aria-label={`Delete recording from ${fmtClock(r.startedAt)}`}
                             className="rounded bg-destructive px-1.5 py-0.5 text-[10px] font-medium text-white"
                           >
                             Delete
                           </button>
                           <button
                             type="button"
-                            onClick={() => setConfirmingId(null)}
+                            ref={(el) => {
+                              if (el) cancelRefs.current.set(r.id, el);
+                              else cancelRefs.current.delete(r.id);
+                            }}
+                            onClick={() => {
+                              lastActionRef.current = { type: "cancel", id: r.id };
+                              setConfirmingId(null);
+                            }}
+                            aria-label={`Cancel deleting recording from ${fmtClock(r.startedAt)}`}
                             className="rounded px-1 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
                           >
                             Cancel
@@ -104,7 +142,14 @@ export function RecordingsPanel({
                       : (
                         <button
                           type="button"
-                          onClick={() => setConfirmingId(r.id)}
+                          ref={(el) => {
+                            if (el) trashRefs.current.set(r.id, el);
+                            else trashRefs.current.delete(r.id);
+                          }}
+                          onClick={() => {
+                            lastActionRef.current = { type: "open", id: r.id };
+                            setConfirmingId(r.id);
+                          }}
                           title={`Delete this recording (${fmtBytes(r.bytes)})`}
                           aria-label={`Delete recording from ${fmtClock(r.startedAt)}`}
                           className="shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive focus-visible:opacity-100"
