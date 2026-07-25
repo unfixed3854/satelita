@@ -5,16 +5,19 @@
 // AptDecoder that emits image lines the moment they are decoded
 // (~2 lines/second).
 //
-// Broadcast events (see events.ts), same shape as the old Tauri events:
+// Broadcast events (see events.ts):
 //   apt-line   { start_line, width, count, pixels_b64 }
-//   apt-final  { data_url }
+//   apt-signal { peak, rms, sync, lines, elapsed_secs }
+//   apt-final  { id }
 //   apt-status { state, message, elapsed_secs }
 
 import { AptDecoder, APT_LINE_WIDTH } from "./apt-decoder.ts";
 import { broadcast } from "./events.ts";
 import { recordingsDir } from "./paths.ts";
 
-const CAPTURE_RATE = 60_000; // rtl_fm FM-demod output rate (also the DSP rate)
+/** rtl_fm FM-demod output rate — also the DSP rate, and the divisor that
+ * turns a recording's signal.raw byte count back into its duration. */
+export const CAPTURE_RATE = 60_000;
 
 // `@std/encoding/base64` is a JSR-only specifier: Deno resolves it fine at
 // runtime, but Vite's production bundler, dev-mode dependency scanner, and
@@ -74,10 +77,24 @@ export function bytesToSamples(buf: Uint8Array, carry: { byte: number | null }):
   return Float32Array.from(samples);
 }
 
+/** Peak magnitude and RMS of a sample chunk, for the UI's level meter.
+ * Peak is what reveals clipping; RMS is what tracks the pass envelope. */
+export function chunkLevel(samples: Float32Array): { peak: number; rms: number } {
+  let peak = 0;
+  let sumSq = 0;
+  for (const s of samples) {
+    const a = Math.abs(s);
+    if (a > peak) peak = a;
+    sumSq += s * s;
+  }
+  return { peak, rms: samples.length > 0 ? Math.sqrt(sumSq / samples.length) : 0 };
+}
+
 interface Session {
   rtl: Deno.ChildProcess;
   reader: Promise<void>;
   runDir: string;
+  id: string;
   sat: string;
   startEpoch: number;
 }
@@ -94,6 +111,7 @@ async function readerLoop(
   const decoder = new AptDecoder(CAPTURE_RATE);
   const carry = { byte: null as number | null };
   let lastStatus = -1;
+  let lastSignalMs = 0;
 
   const reader = stdout.getReader();
   try {
@@ -113,6 +131,21 @@ async function readerLoop(
           width: APT_LINE_WIDTH,
           count: lines.length,
           pixels_b64: encodeBase64(flat),
+        });
+      }
+
+      // 4 Hz is the fastest the meter strips can show; rtl_fm delivers
+      // chunks faster than that.
+      const nowMs = Date.now();
+      if (nowMs - lastSignalMs >= 250) {
+        lastSignalMs = nowMs;
+        const { peak, rms } = chunkLevel(samples);
+        broadcast("apt-signal", {
+          peak,
+          rms,
+          sync: decoder.lastSyncScore,
+          lines: decoder.linesOut,
+          elapsed_secs: nowSecs() - startEpoch,
         });
       }
 
@@ -182,7 +215,8 @@ export async function startRecording(sat: string, gain: string, device: number):
     if (!freq) throw new Error("Unknown satellite (use 15, 18 or 19).");
 
     const startEpoch = nowSecs();
-    const runDir = recordingsDir(`noaa${sat}-${startEpoch}`);
+    const id = `noaa${sat}-${startEpoch}`;
+    const runDir = recordingsDir(id);
     await Deno.mkdir(`${runDir}/decode`, { recursive: true });
 
     const rtlArgs = ["-d", String(device), "-f", freq, "-M", "fm", "-s", String(CAPTURE_RATE), "-E", "dc", "-F", "9"];
@@ -204,7 +238,7 @@ export async function startRecording(sat: string, gain: string, device: number):
     const rawPath = `${runDir}/signal.raw`;
     const reader = readerLoop(rtl.stdout, rawPath, startEpoch);
 
-    session = { rtl, reader, runDir, sat, startEpoch };
+    session = { rtl, reader, runDir, id, sat, startEpoch };
 
     emitStatus("recording", `Recording NOAA-${sat} on ${freq}`, 0);
     return `Recording NOAA-${sat} (${freq})`;
@@ -229,12 +263,14 @@ export async function stopRecording(): Promise<string> {
   await current.reader;
 
   const elapsed = nowSecs() - current.startEpoch;
-  emitStatus("stopped", "Running final decode…", elapsed);
+  emitStatus("decoding", "Running final decode…", elapsed);
 
   (async () => {
     const png = await finalDecode(current.runDir, current.sat, current.startEpoch);
     if (png) {
-      broadcast("apt-final", { data_url: `data:image/png;base64,${encodeBase64(png)}` });
+      // Just the id — the client fetches the image from
+      // /api/recordings/:id/:image, which the browser can cache.
+      broadcast("apt-final", { id: current.id });
     }
     emitStatus("stopped", `Stopped. Files in ${current.runDir}`, elapsed);
   })();
