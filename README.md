@@ -10,6 +10,25 @@ and packaged as a native app with [`deno desktop`](https://docs.deno.com/runtime
 - `rtl_fm`, `sox`, and `satdump` on `PATH`
 - An RTL-SDR dongle
 
+## Using the app
+
+The left rail holds capture settings and live telemetry; the rest of the
+window is the decoded image.
+
+- **Gain** — drag the slider, type an exact value, or switch on **AGC**.
+  Watch the **Level** strip while adjusting: it reads `CLIP` in amber when
+  the front end is saturating, which quietly ruins a pass.
+- **Sync lock** — how well the decoder is locking onto APT's sync-A pulse
+  train. Near zero means you are recording noise, not a satellite.
+- **Recordings** — every past pass, with its duration and disk size. A
+  recording holds roughly 7 MB of raw audio per minute plus a WAV copy of
+  the same size, so the total in the panel header grows quickly. Aborted
+  runs list dimmed with no image and are worth deleting.
+- **Image stage** — `Fit width` / `1:1` zoom, and `A+B` / `A` /
+  `B` to isolate one APT channel. Finished passes use satdump's calibrated
+  per-channel images; the live view crops the canvas in half, so the sync
+  and telemetry bars stay visible while a pass is running.
+
 ## Development
 
 ```bash

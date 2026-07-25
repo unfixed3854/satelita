@@ -5,16 +5,16 @@
 // AptDecoder that emits image lines the moment they are decoded
 // (~2 lines/second).
 //
-// Broadcast events (see events.ts), same shape as the old Tauri events:
+// Broadcast events (see events.ts):
 //   apt-line   { start_line, width, count, pixels_b64 }
-//   apt-final  { data_url }
+//   apt-signal { peak, rms, sync, lines, elapsed_secs }
+//   apt-final  { id }
 //   apt-status { state, message, elapsed_secs }
 
 import { AptDecoder, APT_LINE_WIDTH } from "./apt-decoder.ts";
+import { CAPTURE_RATE } from "./constants.ts";
 import { broadcast } from "./events.ts";
 import { recordingsDir } from "./paths.ts";
-
-const CAPTURE_RATE = 60_000; // rtl_fm FM-demod output rate (also the DSP rate)
 
 // `@std/encoding/base64` is a JSR-only specifier: Deno resolves it fine at
 // runtime, but Vite's production bundler, dev-mode dependency scanner, and
@@ -74,16 +74,110 @@ export function bytesToSamples(buf: Uint8Array, carry: { byte: number | null }):
   return Float32Array.from(samples);
 }
 
+/** Peak magnitude and RMS of a sample chunk, for the UI's level meter.
+ * Peak is what reveals clipping; RMS is what tracks the pass envelope. */
+export function chunkLevel(samples: Float32Array): { peak: number; rms: number } {
+  let peak = 0;
+  let sumSq = 0;
+  for (const s of samples) {
+    const a = Math.abs(s);
+    if (a > peak) peak = a;
+    sumSq += s * s;
+  }
+  return { peak, rms: samples.length > 0 ? Math.sqrt(sumSq / samples.length) : 0 };
+}
+
+/** The subset of `Deno.ChildProcess` the recorder actually uses. Narrowing
+ * to an interface (rather than depending on `Deno.ChildProcess` directly)
+ * lets tests inject a fake process — spawning a real `rtl_fm` needs
+ * `--allow-run` and the binary on PATH, neither of which `deno task test`
+ * grants, and the two paths this file's tests exist to cover (an instant
+ * failure, and an unexpected mid-pass exit) are exactly the ones you can't
+ * reliably provoke from a real dongle on demand anyway. */
+export interface RtlProcess {
+  readonly stdout: ReadableStream<Uint8Array>;
+  readonly stderr: ReadableStream<Uint8Array>;
+  readonly status: Promise<Deno.CommandStatus>;
+  kill(signal?: Deno.Signal): void;
+}
+
+export type SpawnRtl = (args: string[]) => RtlProcess;
+
+function spawnRtlProcess(args: string[]): RtlProcess {
+  return new Deno.Command("rtl_fm", { args, stdout: "piped", stderr: "piped" }).spawn();
+}
+
 interface Session {
-  rtl: Deno.ChildProcess;
+  rtl: RtlProcess;
   reader: Promise<void>;
   runDir: string;
+  id: string;
   sat: string;
   startEpoch: number;
 }
 
 let session: Session | null = null;
 let starting = false;
+
+/** Id of the recording currently "busy": from the moment startRecording
+ * creates its directory through the end of its sox/satdump decode — a
+ * strictly wider window than `session`, which clears the instant capture
+ * itself stops (see stopRecording/finishDecode below). sox and satdump go
+ * on writing into `decode/` for a while after that, so deleting the
+ * directory needs to stay blocked for that whole stretch, not just while
+ * rtl_fm is running. */
+let busyId: string | null = null;
+
+/** Id of the recording currently being captured or decoded, or null when
+ * idle. Guards deletion — see `assertRecordingNotBusy`. */
+export function busyRecordingId(): string | null {
+  return busyId;
+}
+
+/** Throws if `id` names the recording currently busy (see
+ * `busyRecordingId`). Exported as its own function, rather than inlined at
+ * the one call site in functions.ts, so the guard's exact behavior is unit
+ * testable without going through the `createServerFn` wrapper. */
+export function assertRecordingNotBusy(id: string): void {
+  if (id === busyId) {
+    throw new Error("Cannot delete a recording that is currently in progress.");
+  }
+}
+
+/** Drain a child's stderr into its log file while also returning the text,
+ * so a failure (e.g. rtl_fm rejecting an unknown device) can be reported
+ * back to the client instead of only ending up in a log file nobody reads. */
+async function captureStderr(
+  stream: ReadableStream<Uint8Array>,
+  logFile: Deno.FsFile,
+): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done || !value) break;
+      await logFile.write(value);
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    reader.releaseLock();
+    logFile.close();
+  }
+  return text;
+}
+
+/** Bytes written to `signal.raw` so far — the difference between "rtl_fm
+ * rejected the device instantly" (nothing worth decoding) and "rtl_fm died
+ * mid-pass" (minutes of signal worth keeping). */
+async function rawBytesCaptured(runDir: string): Promise<number> {
+  try {
+    return (await Deno.stat(`${runDir}/signal.raw`)).size;
+  } catch {
+    return 0;
+  }
+}
 
 async function readerLoop(
   stdout: ReadableStream<Uint8Array>,
@@ -94,6 +188,7 @@ async function readerLoop(
   const decoder = new AptDecoder(CAPTURE_RATE);
   const carry = { byte: null as number | null };
   let lastStatus = -1;
+  let lastSignalMs = 0;
 
   const reader = stdout.getReader();
   try {
@@ -113,6 +208,21 @@ async function readerLoop(
           width: APT_LINE_WIDTH,
           count: lines.length,
           pixels_b64: encodeBase64(flat),
+        });
+      }
+
+      // 4 Hz is the fastest the meter strips can show; rtl_fm delivers
+      // chunks faster than that.
+      const nowMs = Date.now();
+      if (nowMs - lastSignalMs >= 250) {
+        lastSignalMs = nowMs;
+        const { peak, rms } = chunkLevel(samples);
+        broadcast("apt-signal", {
+          peak,
+          rms,
+          sync: decoder.lastSyncScore,
+          lines: decoder.linesOut,
+          elapsed_secs: nowSecs() - startEpoch,
         });
       }
 
@@ -171,7 +281,39 @@ async function finalDecode(runDir: string, sat: string, startEpoch: number): Pro
   }
 }
 
-export async function startRecording(sat: string, gain: string, device: number): Promise<string> {
+/** Run sox/satdump on whatever `current` captured and report the result,
+ * then clear `busyId`. Shared by an explicit Stop and by the exit watcher
+ * in startRecording below when rtl_fm crashes mid-pass with something
+ * worth decoding: a crash 8 minutes into a 12-minute pass still has 8
+ * minutes of `signal.raw` worth keeping, so both paths finish the same way
+ * instead of the crash path abandoning the run. Assumes the child has
+ * already exited (or been killed) and `current.reader` has already been
+ * drained — callers are responsible for that part, since it differs
+ * slightly between an explicit Stop (kill, then wait) and a crash (already
+ * exited, nothing to kill). */
+async function finishDecode(current: Session): Promise<void> {
+  const elapsed = nowSecs() - current.startEpoch;
+  emitStatus("decoding", "Running final decode…", elapsed);
+
+  try {
+    const png = await finalDecode(current.runDir, current.sat, current.startEpoch);
+    if (png) {
+      // Just the id — the client fetches the image from
+      // /api/recordings/:id/:image, which the browser can cache.
+      broadcast("apt-final", { id: current.id });
+    }
+    emitStatus("stopped", `Stopped. Files in ${current.runDir}`, elapsed);
+  } finally {
+    if (busyId === current.id) busyId = null;
+  }
+}
+
+export async function startRecording(
+  sat: string,
+  gain: string,
+  device: number,
+  spawnRtl: SpawnRtl = spawnRtlProcess,
+): Promise<string> {
   if (session !== null || starting) {
     throw new Error("Already recording — stop the current pass first.");
   }
@@ -182,7 +324,8 @@ export async function startRecording(sat: string, gain: string, device: number):
     if (!freq) throw new Error("Unknown satellite (use 15, 18 or 19).");
 
     const startEpoch = nowSecs();
-    const runDir = recordingsDir(`noaa${sat}-${startEpoch}`);
+    const id = `noaa${sat}-${startEpoch}`;
+    const runDir = recordingsDir(id);
     await Deno.mkdir(`${runDir}/decode`, { recursive: true });
 
     const rtlArgs = ["-d", String(device), "-f", freq, "-M", "fm", "-s", String(CAPTURE_RATE), "-E", "dc", "-F", "9"];
@@ -191,20 +334,80 @@ export async function startRecording(sat: string, gain: string, device: number):
     }
     rtlArgs.push("-");
 
-    let rtl: Deno.ChildProcess;
+    let rtl: RtlProcess;
     try {
-      rtl = new Deno.Command("rtl_fm", { args: rtlArgs, stdout: "piped", stderr: "piped" }).spawn();
+      rtl = spawnRtl(rtlArgs);
     } catch (e) {
       throw new Error(`Failed to start rtl_fm: ${e instanceof Error ? e.message : e}`);
     }
 
     const rtlLog = await Deno.open(`${runDir}/rtl.log`, { create: true, write: true, truncate: true });
-    rtl.stderr.pipeTo(rtlLog.writable).catch(() => {});
+    // Attached immediately: a write error (ENOSPC, say) or `logFile.close()`
+    // throwing shouldn't be able to reject this promise with nobody
+    // listening. Without the .catch, nothing awaits it until the watcher
+    // below gets past `await rtl.status` — i.e. for the whole of a
+    // successful recording — and an unhandled rejection takes the whole
+    // Deno process down mid-pass.
+    const stderrText = captureStderr(rtl.stderr, rtlLog).catch((e) => {
+      console.error(`[recorder] stderr capture for ${id} failed:`, e);
+      return "";
+    });
 
     const rawPath = `${runDir}/signal.raw`;
-    const reader = readerLoop(rtl.stdout, rawPath, startEpoch);
+    // Attached immediately, same reasoning as stderrText just above: a
+    // rejection here (rawFile.write hitting ENOSPC mid-pass, or the
+    // initial Deno.open failing) would otherwise have no handler for the
+    // entire stretch until the watcher below gets past `await rtl.status`
+    // — i.e. the whole time rtl_fm is still alive, potentially many
+    // minutes. Reassigning `reader` to the caught promise (rather than
+    // adding a second `.catch` downstream) means later `await reader`s in
+    // the watcher and in stopRecording just see it resolve normally —
+    // nothing double-handles or double-logs.
+    const reader = readerLoop(rtl.stdout, rawPath, startEpoch).catch((e) => {
+      console.error(`[recorder] reader for ${id} failed:`, e);
+    });
 
-    session = { rtl, reader, runDir, sat, startEpoch };
+    session = { rtl, reader, runDir, id, sat, startEpoch };
+    busyId = id;
+
+    // rtl_fm can die at any point in a pass — instantly if it rejects a bad
+    // device, or minutes in if the dongle is unplugged. Neither readerLoop
+    // (which just sees stdout close) nor the caller of startRecording
+    // (whose response has already gone out) notices that on its own, so
+    // watch the child's exit here.
+    (async () => {
+      const status = await rtl.status;
+      const stderrMsg = (await stderrText).trim();
+      // `reader` can no longer reject by the time we get here — it was
+      // already caught (and logged) at creation above — so this is just
+      // waiting for readerLoop to finish draining, not handling anything.
+      await reader;
+
+      // If `session` no longer points at this exact process, stopRecording
+      // already handled it — it always clears `session` before killing.
+      if (session?.rtl !== rtl) return;
+      session = null;
+
+      const captured = await rawBytesCaptured(runDir);
+      if (captured === 0) {
+        // Nothing worth decoding — most commonly an instant rejection
+        // before a single sample arrived. Report it directly; there is no
+        // point running finalDecode against an empty file.
+        if (busyId === id) busyId = null;
+        const reason = stderrMsg || `rtl_fm exited unexpectedly (code ${status.code}).`;
+        emitStatus("idle", `rtl_fm failed: ${reason}`, nowSecs() - startEpoch);
+        return;
+      }
+
+      // Something was captured before the crash — finish the same way an
+      // explicit Stop would, so it isn't lost.
+      await finishDecode({ rtl, reader, runDir, id, sat, startEpoch });
+    })().catch((e) => {
+      // Belt and suspenders: every `await` above already has its own
+      // handler, but a bug in this IIFE itself must not become an
+      // unhandled rejection that kills the server mid-pass.
+      console.error(`[recorder] exit watcher for ${id} failed:`, e);
+    });
 
     emitStatus("recording", `Recording NOAA-${sat} on ${freq}`, 0);
     return `Recording NOAA-${sat} (${freq})`;
@@ -225,19 +428,23 @@ export async function stopRecording(): Promise<string> {
   } catch {
     // already exited
   }
-  await current.rtl.status;
+  await current.rtl.status.catch((e) => {
+    console.error(`[recorder] rtl.status for ${current.id} failed:`, e);
+  });
+  // `current.reader` can no longer reject — it was already caught (and
+  // logged) at creation in startRecording — so this just waits for
+  // readerLoop to finish draining.
   await current.reader;
 
-  const elapsed = nowSecs() - current.startEpoch;
-  emitStatus("stopped", "Running final decode…", elapsed);
-
-  (async () => {
-    const png = await finalDecode(current.runDir, current.sat, current.startEpoch);
-    if (png) {
-      broadcast("apt-final", { data_url: `data:image/png;base64,${encodeBase64(png)}` });
-    }
-    emitStatus("stopped", `Stopped. Files in ${current.runDir}`, elapsed);
-  })();
+  // Fire-and-forget: the decode itself (sox + satdump) can take a while,
+  // and the caller only needs to know the capture has stopped, not that
+  // the decode has finished. finishDecode has its own error handling and
+  // clears `busyId` in a `finally`, so a decode failure can't leave the
+  // directory permanently undeletable — but it also must not become an
+  // unhandled rejection.
+  void finishDecode(current).catch((e) => {
+    console.error(`[recorder] finishDecode for ${current.id} failed:`, e);
+  });
 
   return current.runDir;
 }
@@ -252,11 +459,17 @@ export function abortActiveSession(): void {
     }
     session = null;
   }
+  busyId = null;
 }
 
-globalThis.addEventListener("unload", () => {
-  abortActiveSession();
-});
+// `vite dev` runs this module under Node, where `globalThis.addEventListener`
+// doesn't exist — this listener only matters in the Deno desktop runtime, so
+// guard it the same way the signal listeners below are already guarded.
+if (typeof globalThis.addEventListener === "function") {
+  globalThis.addEventListener("unload", () => {
+    abortActiveSession();
+  });
+}
 
 for (const signal of ["SIGTERM", "SIGINT"] as const) {
   try {
