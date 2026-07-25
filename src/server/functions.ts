@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { activeSessionId, startRecording, stopRecording } from "./recorder.ts";
+import { assertRecordingNotBusy, startRecording, stopRecording } from "./recorder.ts";
 import { deleteRecording, listRecordings, type Recording } from "./recordings.ts";
 
 type StartInput = { sat: string; gain: string; device: number };
@@ -23,8 +23,6 @@ export const listRecordingsFn = createServerFn({ method: "GET" }).handler(
 export const deleteRecordingFn = createServerFn({ method: "POST" })
   .validator((data: { id: string }) => data)
   .handler(async ({ data }) => {
-    if (data.id === activeSessionId()) {
-      throw new Error("Cannot delete a recording that is currently in progress.");
-    }
+    assertRecordingNotBusy(data.id);
     await deleteRecording(data.id);
   });
