@@ -2386,16 +2386,32 @@ Expected: succeeds with no TypeScript errors.
 Run: `deno task test`
 Expected: PASS — all decoder, recorder, events, recordings, and apt tests.
 
+**Verification target — read before Step 4. `npm run dev` CANNOT verify this task.**
+
+`vite dev` runs under Node, which has no `Deno` global at all. Every `Deno.*` call made at request time from a route or server function throws `ReferenceError: Deno is not defined`, which `recordings.ts`'s `catch` blocks swallow into an empty list or a 404. Under `npm run dev` the recordings panel will therefore appear empty and every image will 404 — not a bug in your code, just the wrong runtime. This matches the README, which already documents `npm run dev` as UI-only and `deno task preview` as the way to exercise Deno-backed behaviour.
+
+Verify against the production build running under real Deno. This was confirmed working before this task was dispatched:
+
+```bash
+npm run build && PORT=3111 deno run --allow-env --allow-read --allow-write --allow-net --allow-run=rtl_fm,sox,satdump .output/server/index.mjs
+```
+
+Run that in the background, then open it with `preview_start` using `{url: "http://localhost:3111"}` — **not** `{name: "dev"}`. All the browser tools (`read_page`, `computer`, `javascript_tool`, `read_network_requests`, `read_console_messages`) work against that tab normally.
+
+There is no hot reload on this path. After changing any source file, rebuild and restart the server before re-checking. Because of that, get the code compiling and the tests passing first, and treat the browser pass as a single verification sweep rather than an edit loop.
+
+`preview_logs` will not carry the Deno server's output on this path (the server is started by you, not by `preview_start`), so redirect its stdout/stderr to a file and read that when you need server-side errors.
+
 - [ ] **Step 4: Verify the layout renders**
 
-Start the preview (`preview_start` with `{name: "dev"}`), then `read_page`.
+Start the built server under Deno as described above, open it with `preview_start` `{url: "http://localhost:3111"}`, then `read_page`.
 
 Expected to see, in order: the `satelita` heading; a `Satellite` combobox; a gain slider and its numeric textbox; an `AGC` toggle; a `Device` textbox; a `Record` button; `Level`, `Sync lock`, and `Lines` labels; a `Recordings` heading with a total size readout; 9 recording rows; the `IDLE` status chip; zoom and channel segmented controls; a `Save` button; and the status line.
 
 Then check the console:
 
 `read_console_messages` with `{onlyErrors: true}`
-Expected: no errors. (The known dev-mode SSR `useContext` warning documented in the README originates server-side from `@base-ui/react`'s `Select` and appears in `preview_logs`, not the browser console — it is pre-existing noise, not a regression.)
+Expected: no errors. Note that the `useContext` SSR warning documented in the README is a **dev-mode-only** artifact and does not occur in the production build you are testing against — so on this path there is no known-noise exemption. Any error you see here is real; investigate it.
 
 - [ ] **Step 5: Verify opening a past recording**
 
