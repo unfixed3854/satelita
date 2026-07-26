@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { HardDrive, ImageOff, Trash2 } from "lucide-react";
 
 import type { Recording } from "@/server/recordings";
 import { fmtBytes, fmtClock, fmtElapsed } from "@/lib/apt";
 import { cn } from "@/lib/utils";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 export interface RecordingsPanelProps {
   recordings: Recording[];
@@ -24,34 +25,6 @@ export function RecordingsPanel({
 }: RecordingsPanelProps) {
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const totalBytes = recordings.reduce((sum, r) => sum + r.bytes, 0);
-
-  // Focus management for the two-step delete confirm. The trash button and
-  // the Delete/Cancel span are mutually-exclusive subtrees, so React
-  // unmounts one and mounts the other on every transition — without this,
-  // the browser drops focus to <body> and a keyboard/screen-reader user
-  // loses their place in the list on the one workflow that destroys data.
-  const trashRefs = useRef(new Map<string, HTMLButtonElement>());
-  const cancelRefs = useRef(new Map<string, HTMLButtonElement>());
-  // What caused the most recent confirmingId change, set synchronously by
-  // the handler below and consumed by the effect once React has committed
-  // the resulting DOM. "delete" is intentionally not restored to — that
-  // row is about to disappear from the recordings list.
-  const lastActionRef = useRef<{ type: "open" | "cancel"; id: string } | { type: "delete" } | null>(
-    null,
-  );
-
-  useEffect(() => {
-    const action = lastActionRef.current;
-    if (!action) return;
-    if (action.type === "open") {
-      // Land on Cancel, not Delete — Cancel is the safe default, and
-      // landing focus on a destructive control invites an accidental
-      // second Enter press.
-      cancelRefs.current.get(action.id)?.focus();
-    } else if (action.type === "cancel") {
-      trashRefs.current.get(action.id)?.focus();
-    }
-  }, [confirmingId]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
@@ -107,13 +80,34 @@ export function RecordingsPanel({
                       </span>
                     </button>
 
-                    {confirming
-                      ? (
-                        <span className="flex shrink-0 items-center gap-1">
+                    <Popover
+                      open={confirming}
+                      onOpenChange={(open) => setConfirmingId(open ? r.id : null)}
+                    >
+                      <PopoverTrigger
+                        type="button"
+                        title={`Delete this recording (${fmtBytes(r.bytes)})`}
+                        aria-label={`Delete recording from ${fmtClock(r.startedAt)}`}
+                        className={cn(
+                          "shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive focus-visible:opacity-100",
+                          confirming && "opacity-100 text-destructive",
+                        )}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </PopoverTrigger>
+                      <PopoverContent align="end" className="w-auto gap-2">
+                        <p className="text-xs">Delete this recording?</p>
+                        <div className="flex justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setConfirmingId(null)}
+                            className="rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+                          >
+                            Cancel
+                          </button>
                           <button
                             type="button"
                             onClick={() => {
-                              lastActionRef.current = { type: "delete" };
                               onDelete(r.id);
                               setConfirmingId(null);
                             }}
@@ -122,41 +116,9 @@ export function RecordingsPanel({
                           >
                             Delete
                           </button>
-                          <button
-                            type="button"
-                            ref={(el) => {
-                              if (el) cancelRefs.current.set(r.id, el);
-                              else cancelRefs.current.delete(r.id);
-                            }}
-                            onClick={() => {
-                              lastActionRef.current = { type: "cancel", id: r.id };
-                              setConfirmingId(null);
-                            }}
-                            aria-label={`Cancel deleting recording from ${fmtClock(r.startedAt)}`}
-                            className="rounded px-1 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
-                          >
-                            Cancel
-                          </button>
-                        </span>
-                      )
-                      : (
-                        <button
-                          type="button"
-                          ref={(el) => {
-                            if (el) trashRefs.current.set(r.id, el);
-                            else trashRefs.current.delete(r.id);
-                          }}
-                          onClick={() => {
-                            lastActionRef.current = { type: "open", id: r.id };
-                            setConfirmingId(r.id);
-                          }}
-                          title={`Delete this recording (${fmtBytes(r.bytes)})`}
-                          aria-label={`Delete recording from ${fmtClock(r.startedAt)}`}
-                          className="shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive focus-visible:opacity-100"
-                        >
-                          <Trash2 className="size-3.5" />
-                        </button>
-                      )}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
                   </div>
                 </li>
               );
