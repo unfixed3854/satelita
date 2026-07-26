@@ -4,8 +4,9 @@
   },
   "tasks": {
     "dev": "npm run dev",
-    "preview": "npm run build && deno desktop --allow-env --allow-read --allow-write --allow-net --allow-run=rtl_fm,sox,satdump .",
-    "build": "npm run build && deno desktop --allow-env --allow-read --allow-write --allow-net --allow-run=rtl_fm,sox,satdump .",
+    "preview": "deno desktop --hmr --allow-env --allow-read --allow-write --allow-net --allow-run=rtl_fm,sox,satdump .",
+    "bundle": "deno desktop --allow-env --allow-read --allow-write --allow-net --allow-run=rtl_fm,sox,satdump .",
+    "build": "npm run build",
     "test": "deno test --allow-env --allow-read --allow-write src/server/ src/lib/"
   },
   "desktop": {

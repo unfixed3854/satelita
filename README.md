@@ -43,23 +43,20 @@ Runs the plain TanStack Start (Vite) dev server in your browser at
 deno task preview
 ```
 
-Builds once and opens the app in a native `deno desktop` window, for
-checking desktop-specific behavior (recording, window chrome). This is a
-one-shot launch, not a watch loop — re-run it after making changes.
+Opens the app in a native `deno desktop` window, with hot reload — use it
+for checking desktop-specific behavior (recording, window chrome). It
+stays running and watches the project; press Ctrl-C to stop.
 
-> **Known issue:** `deno desktop --hmr` (previously used for `dev`) has a
-> self-triggering watch loop — it writes its own bootstrap file into the
-> project root while watching that same root, so it immediately restarts
-> itself, forever. That's why `dev` no longer uses `deno desktop` at all.
-> Separately, `deno desktop` without `--hmr` (used by `preview`/`build`)
-> has been observed to occasionally loop internally too (repeated Nitro
-> rebuild cycles with no completion) even after clearing its compile cache
-> at `~/.cache/deno/desktop/`. It's worked reliably at other times in this
-> repo's history (see `dist/satelita.AppImage` having been produced
-> end-to-end previously). `deno desktop` is explicitly experimental — if
-> `preview`/`build` hangs, try clearing `~/.cache/deno/desktop/` and
-> `node_modules/.nitro/` and retrying; if it still hangs, that's an
-> upstream `deno desktop` instability, not a project misconfiguration.
+> **Task-naming constraint:** `deno desktop .` auto-detects the TanStack
+> Start project and drives the framework through this repo's own Deno
+> tasks — it runs `dev` in `--hmr` mode and `build` otherwise. So neither
+> `dev` nor `build` may itself invoke `deno desktop`: doing so makes
+> `deno desktop` re-detect the framework, re-run the task, and recurse
+> forever (endless Vite/Nitro rebuild cycles, no window). That's the
+> reason the packaging task is named `bundle` rather than `build`, and why
+> `dev`/`build` stay plain `npm run` wrappers. This — not upstream
+> instability — was the cause of the `dev` and `preview`/`build` loops
+> previously seen here.
 >
 > Separately, `npm run dev` logs a harmless server-side error on every
 > page load — `Error in renderToReadableStream: TypeError: Cannot read
@@ -71,24 +68,31 @@ one-shot launch, not a watch loop — re-run it after making changes.
 > copy when rendering `Select`, leaving its hook dispatcher uninitialized.
 > The client always successfully re-renders past this and the app is
 > fully interactive — it's console noise, not a functional bug — and it
-> does not occur in the production build (`deno task build`/`preview`),
-> where Nitro's Rollup-based bundler resolves the whole module graph
-> itself instead of falling back to Node's native runtime resolution.
+> does not occur in the production build (`deno task bundle`), where
+> Nitro's Rollup-based bundler resolves the whole module graph itself
+> instead of falling back to Node's native runtime resolution. It does
+> appear under `deno task preview`, which runs that same dev server
+> inside the native window.
 
 ## Build
 
 ```bash
-deno task build
+deno task bundle
 ```
 
-Runs `npm run build` and then `deno desktop`, which packages the app using
-the `desktop` block in `deno.json` (app metadata, per-platform icons, and
-per-platform `output` paths). The output file extension determines the
-installer format (`.app` on macOS, `.msi` on Windows, `.AppImage` on Linux),
-so a native installer lands under `dist/` for whichever platform you build
-on — no `--output` flag is needed on the command line.
+Runs `deno desktop`, which builds the web app (via the `build` task) and
+packages it using the `desktop` block in `deno.json` (app metadata,
+per-platform icons, and per-platform `output` paths). The output file
+extension determines the installer format (`.app` on macOS, `.msi` on
+Windows, `.AppImage` on Linux), so a native installer lands under `dist/`
+for whichever platform you build on — no `--output` flag is needed on the
+command line.
 
-Verified in this repo: on Linux, `deno task build` runs end-to-end
+`deno task build` on its own is just the web build (`vite build && tsc
+--noEmit`) with no packaging; it exists both as a quick type/build check
+and because `deno desktop` calls it.
+
+Verified in this repo: on Linux, `deno task bundle` runs end-to-end
 headlessly (the compile/bundle step does not require a display) and
 produces a working `dist/satelita.AppImage`. Packaging on macOS/Windows,
 and actually launching the packaged app on any platform, has not been
