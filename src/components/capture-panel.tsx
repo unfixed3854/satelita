@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
+import type { RtlDevice } from "@/server/devices";
 
 export const SATS = [
   { id: "15", label: "NOAA-15", freq: "137.620 MHz" },
@@ -38,6 +39,7 @@ export interface CapturePanelProps {
   onGainChange: (value: string) => void;
   device: string;
   onDeviceChange: (value: string) => void;
+  devices: RtlDevice[];
   recording: boolean;
   onStart: () => void;
   onStop: () => void;
@@ -50,10 +52,18 @@ export function CapturePanel({
   onGainChange,
   device,
   onDeviceChange,
+  devices,
   recording,
   onStart,
   onStop,
 }: CapturePanelProps) {
+  // See SAT_ITEMS above: Select.Root needs `items` to resolve the trigger's
+  // label from a plain string value instead of showing the raw index.
+  const deviceItems = devices.map((d) => ({
+    value: String(d.index),
+    label: `${d.index}: ${d.product}`,
+  }));
+
   const agc = gain === "agc";
   // Remembered so toggling AGC off restores the value you had dialled in.
   const lastManualGain = useRef("45");
@@ -161,13 +171,26 @@ export function CapturePanel({
         <Label htmlFor="device" className="text-xs tracking-wide text-muted-foreground uppercase">
           Device
         </Label>
-        <Input
-          id="device"
+        <Select
           value={device}
-          onChange={(e) => onDeviceChange(e.target.value)}
-          disabled={recording}
-          className="w-full font-mono tabular-nums"
-        />
+          onValueChange={(v) => v && onDeviceChange(v)}
+          disabled={recording || devices.length === 0}
+          items={deviceItems}
+        >
+          <SelectTrigger id="device" className="w-full">
+            <SelectValue placeholder="No devices found" />
+          </SelectTrigger>
+          <SelectContent>
+            {devices.map((d) => (
+              <SelectItem key={d.index} value={String(d.index)}>
+                <span className="flex w-full items-center justify-between gap-3">
+                  <span>{d.product}</span>
+                  <span className="font-mono text-xs text-muted-foreground">SN {d.serial}</span>
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {!recording

@@ -4,10 +4,12 @@ import { Satellite } from "lucide-react";
 
 import {
   deleteRecordingFn,
+  listDevicesFn,
   listRecordingsFn,
   startRecordingFn,
   stopRecordingFn,
 } from "../server/functions";
+import type { RtlDevice } from "@/server/devices";
 import type { Recording } from "@/server/recordings";
 import { CapturePanel, SATS } from "@/components/capture-panel";
 import { ImageStage, type StageSource } from "@/components/image-stage";
@@ -31,7 +33,8 @@ export const Route = createFileRoute("/")({
 function App() {
   const [sat, setSat] = useState("15");
   const [gain, setGain] = useState("45");
-  const [device, setDevice] = useState("0");
+  const [device, setDevice] = useState("");
+  const [devices, setDevices] = useState<RtlDevice[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [source, setSource] = useState<StageSource>({ kind: "live" });
@@ -136,6 +139,21 @@ function App() {
   useEffect(() => {
     void refreshRecordings();
   }, [refreshRecordings]);
+
+  // Loaded once on mount rather than kept live: the dongle a user swaps in
+  // mid-session won't appear until they reload, but polling for USB
+  // hotplug changes is more machinery than this list needs.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const found = await listDevicesFn();
+        setDevices(found);
+        setDevice((current) => current || (found[0] ? String(found[0].index) : ""));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    })();
+  }, []);
 
   // Set right before every startRecordingFn call and checked right after it
   // resolves (see start() below) — guards against a race where the SSE
@@ -276,6 +294,7 @@ function App() {
           onGainChange={setGain}
           device={device}
           onDeviceChange={setDevice}
+          devices={devices}
           recording={recording}
           onStart={start}
           onStop={stop}

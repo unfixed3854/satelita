@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { listRtlDevices, type RtlDevice } from "./devices.ts";
 import { assertRecordingNotBusy, startRecording, stopRecording } from "./recorder.ts";
 import {
   deleteRecording,
@@ -22,6 +23,12 @@ export const stopRecordingFn = createServerFn({ method: "POST" }).handler(async 
 export const listRecordingsFn = createServerFn({ method: "GET" }).handler(
   async (): Promise<Recording[]> => {
     return await listRecordings();
+  },
+);
+
+export const listDevicesFn = createServerFn({ method: "GET" }).handler(
+  async (): Promise<RtlDevice[]> => {
+    return await listRtlDevices();
   },
 );
 

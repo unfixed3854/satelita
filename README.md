@@ -7,7 +7,7 @@ and packaged as a native app with [`deno desktop`](https://docs.deno.com/runtime
 ## Requirements
 
 - [Deno](https://deno.com/) 2.9+
-- `rtl_fm`, `sox`, and `satdump` on `PATH`
+- `rtl_fm`, `rtl_test`, `sox`, and `satdump` on `PATH`
 - An RTL-SDR dongle
 
 ## Using the app
