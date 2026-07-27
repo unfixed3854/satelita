@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { listRtlDevices, type RtlDevice } from "./devices.ts";
+import { lookupCoordinates } from "./geoip.ts";
 import { assertRecordingNotBusy, startRecording, stopRecording } from "./recorder.ts";
 import {
   deleteRecording,
@@ -7,6 +8,8 @@ import {
   parseRecordingId,
   type Recording,
 } from "./recordings.ts";
+import { type Station, readStation, writeStation } from "./station.ts";
+import { getTles, type TleResult } from "./tle.ts";
 
 type StartInput = { sat: string; gain: string; device: number };
 
@@ -44,3 +47,37 @@ export const deleteRecordingFn = createServerFn({ method: "POST" })
     assertRecordingNotBusy(data.id);
     await deleteRecording(data.id);
   });
+
+export const getTleFn = createServerFn({ method: "GET" }).handler(
+  async (): Promise<TleResult> => {
+    return await getTles();
+  },
+);
+
+export const getStationFn = createServerFn({ method: "GET" }).handler(
+  async (): Promise<Station | null> => {
+    return await readStation();
+  },
+);
+
+// The `{ lat, lon, altM }` annotation is erased at build time, so the
+// validator is the only runtime guard standing between a malformed request
+// and a station.json the tracking route would then read back as "unset".
+export const setStationFn = createServerFn({ method: "POST" })
+  .validator((data: { lat: number; lon: number; altM: number }) => data)
+  .handler(async ({ data }): Promise<Station> => {
+    const station: Station = { ...data, source: "manual" };
+    await writeStation(station);
+    return station;
+  });
+
+// Runs only when getStationFn returned null, or when the operator presses
+// Detect. Composes the two modules rather than letting geoip.ts touch disk.
+export const detectStationFn = createServerFn({ method: "POST" }).handler(
+  async (): Promise<Station> => {
+    const { lat, lon } = await lookupCoordinates();
+    const station: Station = { lat, lon, altM: 0, source: "auto" };
+    await writeStation(station);
+    return station;
+  },
+);
