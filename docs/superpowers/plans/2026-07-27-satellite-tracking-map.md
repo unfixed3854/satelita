@@ -2348,12 +2348,7 @@ function strokePath(
   // Every path on a wrapping map has to be split first, or a segment
   // crossing 180 draws as a streak straight back across the map.
   for (const segment of splitAtAntimeridian(points)) {
-    ctx.beginPath();
-    segment.forEach((p, i) => {
-      const { x, y } = project(p.lat, p.lon, w, h);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
+    traceOpen(ctx, w, h, segment);
     ctx.stroke();
   }
 }
@@ -2368,54 +2363,67 @@ function drawTrack(ctx: CanvasRenderingContext2D, w: number, h: number, sat: Map
   ctx.globalAlpha = 1;
 }
 
+/** Traces points as an OPEN path — no closePath, no return to the start. */
+function traceOpen(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  points: GeoPoint[],
+) {
+  ctx.beginPath();
+  points.forEach((p, i) => {
+    const { x, y } = project(p.lat, p.lon, w, h);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+}
+
 function drawFootprint(ctx: CanvasRenderingContext2D, w: number, h: number, sat: MapSatellite) {
   const radius = footprintRadiusDeg(sat.subpoint.altKm);
   const polygon = footprintPolygon(sat.subpoint.lat, sat.subpoint.lon, radius);
   const pole = enclosedPole(sat.subpoint.lat, radius);
+  // Sorting by longitude turns a pole-enclosing footprint's vertices into
+  // a single left-to-right arc across the map.
+  const sorted = pole === null ? null : [...polygon].sort((a, b) => a.lon - b.lon);
+  const segments = splitAtAntimeridian(polygon);
 
   ctx.strokeStyle = sat.color;
   ctx.fillStyle = sat.color;
   ctx.lineWidth = 1;
 
-  if (pole === null) {
-    // An ordinary footprint is a closed loop, so it can be filled.
-    const segments = splitAtAntimeridian(polygon);
+  // The shaded area and the outline are deliberately built from different
+  // paths. Filling requires a closed shape, and closing one here means
+  // running along the antimeridian or across the top of the map — segments
+  // that are artifacts of the projection, not part of the satellite's
+  // reception boundary. Stroking the same closed path draws a hard bright
+  // line along the full width of the map's top edge whenever the footprint
+  // covers a pole, and vertical chords at both edges whenever it straddles
+  // 180 degrees, implying horizons that are not there. So the outline is
+  // stroked as open arcs while the fill keeps its closures.
+  ctx.globalAlpha = 0.1;
+  if (sorted === null) {
     for (const segment of segments) {
-      ctx.beginPath();
-      segment.forEach((p, i) => {
-        const { x, y } = project(p.lat, p.lon, w, h);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      });
+      traceOpen(ctx, w, h, segment);
       ctx.closePath();
-      ctx.globalAlpha = 0.1;
       ctx.fill();
-      ctx.globalAlpha = 0.7;
-      ctx.stroke();
     }
-    ctx.globalAlpha = 1;
-    return;
+  } else {
+    // A footprint containing a pole has no closed outline in this
+    // projection: it enters at one edge and leaves at the other. Closing
+    // it along the map's top or bottom edge fills the polar cap that the
+    // satellite really does see.
+    traceOpen(ctx, w, h, sorted);
+    ctx.lineTo(w, pole === "north" ? 0 : h);
+    ctx.lineTo(0, pole === "north" ? 0 : h);
+    ctx.closePath();
+    ctx.fill();
   }
 
-  // A footprint containing a pole has no closed outline in this
-  // projection: it enters at one edge and leaves at the other. Closing it
-  // along the map's top or bottom edge fills the polar cap that the
-  // satellite really does see.
-  const sorted = [...polygon].sort((a, b) => a.lon - b.lon);
-  const edgeY = pole === "north" ? 0 : h;
-  ctx.beginPath();
-  sorted.forEach((p, i) => {
-    const { x, y } = project(p.lat, p.lon, w, h);
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-  ctx.lineTo(w, edgeY);
-  ctx.lineTo(0, edgeY);
-  ctx.closePath();
-  ctx.globalAlpha = 0.1;
-  ctx.fill();
   ctx.globalAlpha = 0.7;
-  ctx.stroke();
+  for (const segment of sorted === null ? segments : [sorted]) {
+    traceOpen(ctx, w, h, segment);
+    ctx.stroke();
+  }
   ctx.globalAlpha = 1;
 }
 
