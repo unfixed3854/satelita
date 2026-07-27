@@ -3,8 +3,10 @@ import { feature } from "topojson-client";
 import type { GeometryCollection, Topology } from "topojson-specification";
 import landTopology from "world-atlas/land-110m.json";
 
+import { enclosedPole, footprintPolygon } from "@/lib/footprint";
 import type { GeoPoint, Subpoint } from "@/lib/orbit";
-import { project } from "@/lib/projection";
+import { footprintRadiusDeg } from "@/lib/orbit";
+import { project, splitAtAntimeridian } from "@/lib/projection";
 import { subsolarPoint, terminatorLatitude } from "@/lib/terminator";
 import { readToken } from "@/lib/theme";
 
@@ -115,7 +117,104 @@ function drawStation(ctx: CanvasRenderingContext2D, w: number, h: number, statio
   ctx.stroke();
 }
 
-export function WorldMap({ date, station }: WorldMapProps) {
+function strokePath(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  points: GeoPoint[],
+) {
+  // Every path on a wrapping map has to be split first, or a segment
+  // crossing 180 draws as a streak straight back across the map.
+  for (const segment of splitAtAntimeridian(points)) {
+    ctx.beginPath();
+    segment.forEach((p, i) => {
+      const { x, y } = project(p.lat, p.lon, w, h);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+}
+
+function drawTrack(ctx: CanvasRenderingContext2D, w: number, h: number, sat: MapSatellite) {
+  ctx.strokeStyle = sat.color;
+  ctx.lineWidth = 1.25;
+  ctx.globalAlpha = 0.55;
+  ctx.setLineDash([4, 3]);
+  strokePath(ctx, w, h, sat.track);
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+}
+
+function drawFootprint(ctx: CanvasRenderingContext2D, w: number, h: number, sat: MapSatellite) {
+  const radius = footprintRadiusDeg(sat.subpoint.altKm);
+  const polygon = footprintPolygon(sat.subpoint.lat, sat.subpoint.lon, radius);
+  const pole = enclosedPole(sat.subpoint.lat, radius);
+
+  ctx.strokeStyle = sat.color;
+  ctx.fillStyle = sat.color;
+  ctx.lineWidth = 1;
+
+  if (pole === null) {
+    // An ordinary footprint is a closed loop, so it can be filled.
+    const segments = splitAtAntimeridian(polygon);
+    for (const segment of segments) {
+      ctx.beginPath();
+      segment.forEach((p, i) => {
+        const { x, y } = project(p.lat, p.lon, w, h);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.closePath();
+      ctx.globalAlpha = 0.1;
+      ctx.fill();
+      ctx.globalAlpha = 0.7;
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    return;
+  }
+
+  // A footprint containing a pole has no closed outline in this
+  // projection: it enters at one edge and leaves at the other. Closing it
+  // along the map's top or bottom edge fills the polar cap that the
+  // satellite really does see.
+  const sorted = [...polygon].sort((a, b) => a.lon - b.lon);
+  const edgeY = pole === "north" ? 0 : h;
+  ctx.beginPath();
+  sorted.forEach((p, i) => {
+    const { x, y } = project(p.lat, p.lon, w, h);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.lineTo(w, edgeY);
+  ctx.lineTo(0, edgeY);
+  ctx.closePath();
+  ctx.globalAlpha = 0.1;
+  ctx.fill();
+  ctx.globalAlpha = 0.7;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+function drawMarker(ctx: CanvasRenderingContext2D, w: number, h: number, sat: MapSatellite) {
+  const { x, y } = project(sat.subpoint.lat, sat.subpoint.lon, w, h);
+
+  ctx.fillStyle = sat.color;
+  ctx.beginPath();
+  ctx.arc(x, y, 4, 0, 2 * Math.PI);
+  ctx.fill();
+
+  ctx.font = "11px ui-monospace, monospace";
+  ctx.textBaseline = "middle";
+  // Flip the label to the left near the right edge so it never runs off.
+  const labelWidth = ctx.measureText(sat.label).width;
+  const flip = x + 10 + labelWidth > w;
+  ctx.textAlign = flip ? "right" : "left";
+  ctx.fillText(sat.label, flip ? x - 8 : x + 8, y);
+}
+
+export function WorldMap({ date, station, satellites }: WorldMapProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -179,7 +278,11 @@ export function WorldMap({ date, station }: WorldMapProps) {
     drawGraticule(ctx, w, h, colors.grid);
     drawNight(ctx, w, h, date, colors.night);
     if (station) drawStation(ctx, w, h, station, colors.station);
-  }, [date, station, size, landPath, colors]);
+
+    for (const sat of satellites) drawTrack(ctx, w, h, sat);
+    for (const sat of satellites) drawFootprint(ctx, w, h, sat);
+    for (const sat of satellites) drawMarker(ctx, w, h, sat);
+  }, [date, station, size, landPath, colors, satellites]);
 
   return (
     <div ref={wrapRef} className="size-full min-h-0">
