@@ -2591,7 +2591,14 @@ export function StationSettings(
   const parsedLat = parseCoordinate(lat, 90);
   const parsedLon = parseCoordinate(lon, 180);
   const parsedAlt = Number(altM.trim() === "" ? "0" : altM);
-  const valid = parsedLat !== null && parsedLon !== null && Number.isFinite(parsedAlt);
+
+  // A single nullable payload rather than a parallel `valid` boolean:
+  // TypeScript cannot carry the knowledge that `valid === true` implies
+  // the two coordinates are non-null into the click handler's closure, so
+  // the narrowing has to live in the value itself.
+  const values = parsedLat !== null && parsedLon !== null && Number.isFinite(parsedAlt)
+    ? { lat: parsedLat, lon: parsedLon, altM: parsedAlt }
+    : null;
 
   return (
     <section className="flex flex-col gap-3">
@@ -2644,8 +2651,8 @@ export function StationSettings(
       <div className="flex gap-2">
         <Button
           size="sm"
-          disabled={!valid || saving}
-          onClick={() => onSave({ lat: parsedLat, lon: parsedLon, altM: parsedAlt })}
+          disabled={values === null || saving}
+          onClick={() => values && onSave(values)}
         >
           {saving ? "Saving…" : "Save"}
         </Button>
