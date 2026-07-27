@@ -199,10 +199,11 @@ There is no minimum-elevation filter. Every pass above the horizon is listed
 with its max elevation shown, so the operator judges whether a grazing pass
 is worth recording instead of a hardcoded threshold deciding for them.
 
-Cost is roughly 8,600 propagations for three satellites over 24 hours —
-about 0.1 s. Cheap, but not free: **pass prediction runs on station change,
-TLE change, and a 5-minute timer, never on the 1 Hz render tick**, which
-performs only three `subpoint` calls.
+Cost is roughly 8,600 propagations for three satellites over 24 hours,
+measured at about 10 ms with satellite.js 7. That is cheap enough that the
+scheduling choice is about avoiding pointless work rather than avoiding jank:
+**pass prediction runs on station change, TLE change, and a 5-minute timer,
+never on the 1 Hz render tick**, which performs only three `subpoint` calls.
 
 ## UI
 
@@ -296,7 +297,9 @@ Written test-first, following the project's existing practice.
   polar-night case.
 - `passes.test.ts` — fixed TLE, station and date: AOS < peak < LOS,
   elevation near zero at both horizon crossings, and a plausible pass count
-  for a polar orbiter over 24 hours.
+  for a polar orbiter over 24 hours. A prototype of this search against real
+  NOAA-19 elements from a mid-latitude station found 9 passes, so the test
+  asserts a 5–12 band rather than an exact count.
 - `tle.test.ts`, `station.test.ts`, `geoip.test.ts` — injected `fetch` and
   temporary directories covering every row of the failure-modes table, plus
   checksum rejection of a corrupted element set.
