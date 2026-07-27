@@ -28,6 +28,16 @@ window is the decoded image.
   `B` to isolate one APT channel. Finished passes use satdump's calibrated
   per-channel images; the live view crops the canvas in half, so the sync
   and telemetry bars stay visible while a pass is running.
+- **Tracking** — the `Tracking` tab shows where NOAA-15/18/19 are right
+  now on an offline world map, with ground tracks, reception footprints and
+  a day/night terminator. When your station pin falls inside a footprint,
+  that satellite is above your horizon. The rail lists every pass over your
+  location for the next 24 hours with its max elevation — passes below
+  about 20° tend to be noisy and clipped by terrain. Set your coordinates
+  in the **Station** panel; the first run tries to detect them from your IP
+  address, and any manual edit takes precedence from then on. Orbital
+  elements are fetched from Celestrak once a day and cached, so the map
+  works offline.
 
 ## Development
 
