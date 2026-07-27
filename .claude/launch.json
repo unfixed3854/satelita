@@ -6,6 +6,20 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
       "port": 1420
+    },
+    {
+      "name": "prod-deno",
+      "runtimeExecutable": "deno",
+      "runtimeArgs": [
+        "run",
+        "--allow-env",
+        "--allow-read",
+        "--allow-write",
+        "--allow-net",
+        "--allow-run=rtl_fm,rtl_test,sox,satdump",
+        ".output/server/index.mjs"
+      ],
+      "port": 3000
     }
   ]
 }
