@@ -6,7 +6,7 @@
 // correct there; a canvas arc() would look right near the equator and
 // visibly wrong exactly when it matters.
 
-import type { GeoPoint } from "@/lib/orbit";
+import type { GeoPoint } from "./orbit.ts";
 
 const toRad = (deg: number) => (deg * Math.PI) / 180;
 const toDeg = (rad: number) => (rad * 180) / Math.PI;
