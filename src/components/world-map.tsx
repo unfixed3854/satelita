@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { feature } from "topojson-client";
 import type { GeometryCollection, Topology } from "topojson-specification";
 import landTopology from "world-atlas/land-110m.json";
@@ -34,9 +34,13 @@ const LAND = feature(
  * is smooth at any window size this app runs at. */
 const TERMINATOR_STEP_DEG = 2;
 
-function drawLand(ctx: CanvasRenderingContext2D, w: number, h: number, fill: string) {
-  ctx.fillStyle = fill;
-  ctx.beginPath();
+/** Reprojecting Natural Earth's coastlines is by far the most expensive
+ * thing this component does, and the result depends only on the canvas
+ * size — not on the clock. Building it into a Path2D lets the 1 Hz redraw
+ * be a single `ctx.fill(path)` instead of several thousand `lineTo` calls
+ * a second, every second, for as long as the window is open. */
+function buildLandPath(w: number, h: number): Path2D {
+  const path = new Path2D();
   for (const f of LAND.features) {
     const geometry = f.geometry;
     if (geometry.type !== "MultiPolygon" && geometry.type !== "Polygon") continue;
@@ -47,14 +51,14 @@ function drawLand(ctx: CanvasRenderingContext2D, w: number, h: number, fill: str
       for (const ring of polygon) {
         ring.forEach(([lon, lat], i) => {
           const { x, y } = project(lat, lon, w, h);
-          if (i === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
+          if (i === 0) path.moveTo(x, y);
+          else path.lineTo(x, y);
         });
-        ctx.closePath();
+        path.closePath();
       }
     }
   }
-  ctx.fill();
+  return path;
 }
 
 function drawGraticule(ctx: CanvasRenderingContext2D, w: number, h: number, stroke: string) {
@@ -114,48 +118,68 @@ function drawStation(ctx: CanvasRenderingContext2D, w: number, h: number, statio
 export function WorldMap({ date, station }: WorldMapProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+
+  // The observer is set up once. Keeping it out of the drawing effect
+  // matters because that effect reruns on every tick of the clock, which
+  // would otherwise tear down and rebuild a ResizeObserver once a second
+  // for the lifetime of the window.
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const measure = () => setSize({ w: wrap.clientWidth, h: wrap.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(wrap);
+    return () => observer.disconnect();
+  }, []);
+
+  // getComputedStyle forces a style resolution, so the palette is read
+  // once rather than 86,400 times a day. The theme is fixed at runtime —
+  // <html> is hard-coded to `dark` — so there is nothing to react to.
+  const colors = useMemo(() => ({
+    ocean: readToken("--background", "#0b0f14"),
+    land: readToken("--muted", "#1d2430"),
+    grid: readToken("--grid", "#243040"),
+    night: "oklch(0 0 0 / 45%)",
+    station: readToken("--signal", "#4ade80"),
+  }), []);
+
+  // Rebuilt only when the map is resized. React is explicitly allowed to
+  // discard a useMemo cache, but the only cost here is rebuilding a path
+  // that is already rebuilt on resize — no correctness risk, unlike the
+  // canvas ref in routes/index.tsx where a discarded memo would wipe a
+  // pass mid-capture.
+  const landPath = useMemo(
+    () => (size.w > 0 && size.h > 0 ? buildLandPath(size.w, size.h) : null),
+    [size.w, size.h],
+  );
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    const wrap = wrapRef.current;
-    if (!canvas || !wrap) return;
+    const { w, h } = size;
+    if (!canvas || !landPath || w === 0 || h === 0) return;
 
-    const colors = {
-      ocean: readToken("--background", "#0b0f14"),
-      land: readToken("--muted", "#1d2430"),
-      grid: readToken("--grid", "#243040"),
-      night: "oklch(0 0 0 / 45%)",
-      station: readToken("--signal", "#4ade80"),
-    };
+    const dpr = window.devicePixelRatio || 1;
+    // Assigning width/height clears the canvas, which is exactly what is
+    // wanted at the top of a full redraw.
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
 
-    const render = () => {
-      const dpr = window.devicePixelRatio || 1;
-      const w = wrap.clientWidth;
-      const h = wrap.clientHeight;
-      if (w === 0 || h === 0) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      canvas.width = w * dpr;
-      canvas.height = h * dpr;
-      canvas.style.width = `${w}px`;
-      canvas.style.height = `${h}px`;
-
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-      ctx.fillStyle = colors.ocean;
-      ctx.fillRect(0, 0, w, h);
-      drawLand(ctx, w, h, colors.land);
-      drawGraticule(ctx, w, h, colors.grid);
-      drawNight(ctx, w, h, date, colors.night);
-      if (station) drawStation(ctx, w, h, station, colors.station);
-    };
-
-    render();
-    const observer = new ResizeObserver(render);
-    observer.observe(wrap);
-    return () => observer.disconnect();
-  }, [date, station]);
+    ctx.fillStyle = colors.ocean;
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = colors.land;
+    ctx.fill(landPath);
+    drawGraticule(ctx, w, h, colors.grid);
+    drawNight(ctx, w, h, date, colors.night);
+    if (station) drawStation(ctx, w, h, station, colors.station);
+  }, [date, station, size, landPath, colors]);
 
   return (
     <div ref={wrapRef} className="size-full min-h-0">
