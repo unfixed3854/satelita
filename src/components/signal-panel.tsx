@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import { SIGNAL_HISTORY } from "@/hooks/use-recorder-events";
+import { readToken } from "@/lib/theme";
 
 /** Peak level above which the front end is effectively clipping and the
  * pass is being quietly ruined.
@@ -23,12 +24,6 @@ const CLIP_THRESHOLD = 0.95;
  */
 const SYNC_LOCK_THRESHOLD = 0.75;
 const SYNC_MARGINAL_THRESHOLD = 0.25;
-
-function readToken(name: string, fallback: string): string {
-  if (typeof window === "undefined") return fallback;
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return v || fallback;
-}
 
 type SyncLockState = "LOCK" | "MARGINAL" | "NO LOCK";
 

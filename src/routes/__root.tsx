@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { AppNav } from "@/components/app-nav";
 import appCss from "../app.css?url";
 
 export const Route = createRootRoute({
@@ -24,7 +25,8 @@ function RootDocument({ children }: { children: ReactNode }) {
       <head>
         <HeadContent />
       </head>
-      <body>
+      <body className="flex h-screen flex-col overflow-hidden">
+        <AppNav />
         {children}
         <Scripts />
       </body>

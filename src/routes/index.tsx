@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Satellite } from "lucide-react";
 
 import {
   deleteRecordingFn,
@@ -280,13 +279,8 @@ function App() {
   const current = SATS.find((s) => s.id === sat) ?? SATS[0];
 
   return (
-    <main className="grid h-screen grid-cols-[17rem_1fr] overflow-hidden">
+    <main className="grid min-h-0 flex-1 grid-cols-[17rem_1fr] overflow-hidden">
       <aside className="flex min-h-0 flex-col gap-5 overflow-y-auto border-r border-border bg-sidebar p-4">
-        <div className="flex items-center gap-2">
-          <Satellite className="size-4 text-signal" />
-          <h1 className="font-mono text-sm tracking-[0.2em] uppercase">satelita</h1>
-        </div>
-
         <CapturePanel
           sat={sat}
           onSatChange={setSat}

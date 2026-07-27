@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { listRtlDevices, type RtlDevice } from "./devices.ts";
+import { lookupCoordinates } from "./geoip.ts";
 import { assertRecordingNotBusy, startRecording, stopRecording } from "./recorder.ts";
 import {
   deleteRecording,
@@ -7,6 +8,8 @@ import {
   parseRecordingId,
   type Recording,
 } from "./recordings.ts";
+import { isValidStation, type Station, readStation, writeStation } from "./station.ts";
+import { getTles, type TleResult } from "./tle.ts";
 
 type StartInput = { sat: string; gain: string; device: number };
 
@@ -44,3 +47,44 @@ export const deleteRecordingFn = createServerFn({ method: "POST" })
     assertRecordingNotBusy(data.id);
     await deleteRecording(data.id);
   });
+
+export const getTleFn = createServerFn({ method: "GET" }).handler(
+  async (): Promise<TleResult> => {
+    return await getTles();
+  },
+);
+
+export const getStationFn = createServerFn({ method: "GET" }).handler(
+  async (): Promise<Station | null> => {
+    return await readStation();
+  },
+);
+
+// The `{ lat, lon, altM }` annotation is erased at build time, so this
+// validator is the request's first real runtime guard — it fails fast at
+// the boundary rather than letting a malformed payload travel down to
+// writeStation, which validates again before touching disk. Same
+// belt-and-braces shape as deleteRecordingFn above.
+export const setStationFn = createServerFn({ method: "POST" })
+  .validator((data: { lat: number; lon: number; altM: number }): Station => {
+    const station: Station = { ...data, source: "manual" };
+    if (!isValidStation(station)) {
+      throw new Error(`Invalid station: ${JSON.stringify(data)}`);
+    }
+    return station;
+  })
+  .handler(async ({ data }): Promise<Station> => {
+    await writeStation(data);
+    return data;
+  });
+
+// Runs only when getStationFn returned null, or when the operator presses
+// Detect. Composes the two modules rather than letting geoip.ts touch disk.
+export const detectStationFn = createServerFn({ method: "POST" }).handler(
+  async (): Promise<Station> => {
+    const { lat, lon } = await lookupCoordinates();
+    const station: Station = { lat, lon, altM: 0, source: "auto" };
+    await writeStation(station);
+    return station;
+  },
+);

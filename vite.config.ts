@@ -9,6 +9,15 @@ export default defineConfig({
   server: {
     port: 1420,
   },
+  // satellite.js ships a pthreads-enabled WASM runtime that spawns its own
+  // Worker; Vite's default worker output is IIFE, which can't express that
+  // module's top-level await and fails the build the moment anything
+  // client-side imports satellite.js (world-map.tsx does, for the
+  // terminator's subsolar point). ES module workers support top-level
+  // await, so this is the fix rather than a workaround.
+  worker: {
+    format: "es",
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
