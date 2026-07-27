@@ -11,6 +11,7 @@
   --color-signal: var(--signal);
   --color-signal-dim: var(--signal-dim);
   --color-signal-warn: var(--signal-warn);
+  --color-signal-alt: var(--signal-alt);
   --color-grid: var(--grid);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -78,6 +79,7 @@
   --signal: oklch(0.8 0.19 148);
   --signal-dim: oklch(0.46 0.09 148);
   --signal-warn: oklch(0.8 0.16 75);
+  --signal-alt: oklch(0.78 0.13 220);
   --grid: oklch(1 0 0 / 6%);
 
   --chart-1: var(--signal);

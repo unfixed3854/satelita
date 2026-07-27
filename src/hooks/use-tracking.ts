@@ -30,15 +30,15 @@ const SAT_LABELS: Record<string, string> = {
 };
 
 const SAT_COLOR_TOKENS: Record<string, string> = {
-  "15": "--chart-1",
-  "18": "--chart-2",
-  "19": "--chart-3",
+  "15": "--signal",
+  "18": "--signal-warn",
+  "19": "--signal-alt",
 };
 
 const SAT_COLOR_FALLBACKS: Record<string, string> = {
   "15": "#4ade80",
-  "18": "#38bdf8",
-  "19": "#fbbf24",
+  "18": "#fbbf24",
+  "19": "#38bdf8",
 };
 
 export function satelliteColors(): Record<string, string> {
