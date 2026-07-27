@@ -19,7 +19,17 @@
 - **satellite.js v7 API only.** v7 differs from the v5/v6 examples common online. Verified signatures: `propagate(satrec, date)` returns `PositionAndVelocity | null` — **it returns `null` on failure, it does not return `{position: false}`**. `twoline2satrec(l1, l2)` reports failure via `satrec.error !== 0`. `gstime(date)`, `eciToGeodetic(eci, gmst)`, `eciToEcf(eci, gmst)`, `ecfToLookAngles(observerGeodetic, satelliteEcf)`, `degreesLat`, `degreesLong`, `radiansToDegrees`, `jday(date)`, `sunPos(jday)`.
 - **Angles:** satellite.js works in **radians**; this codebase's own interfaces are all in **degrees**. Every wrapper converts at the boundary. `GeodeticLocation.height` is in **kilometres**.
 - **Server functions live in `src/server/functions.ts`**, never in the modules themselves, matching the existing pattern. Modules stay plain, directly-testable TypeScript.
-- **Imports use the `@/` alias** for cross-directory imports (`@/lib/orbit`), and relative `./x.ts` with the extension inside `src/server/` — match each file's neighbours.
+- **Import style is decided by which tool loads the file, not by taste.**
+  `src/lib/` and `src/server/` are executed directly by `deno test`, and
+  Deno's resolver knows nothing about the `@/` alias (it lives only in
+  `vite.config.ts` and `tsconfig.json`) and requires explicit file
+  extensions. So **every import inside `src/lib/` and `src/server/` must be
+  relative and carry the `.ts` extension** — `./orbit.ts`, `./paths.ts`.
+  Components, hooks and routes are bundled by Vite and never loaded by
+  Deno, so those use the `@/` alias as the rest of the app does.
+  A type-only `@/` import inside `src/lib/` appears to work because
+  TypeScript erases it before Deno ever sees it — it will break the moment
+  anyone adds a value import to the same module. Do not rely on it.
 - **Commit after every task.** Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`).
 - **Comments explain *why*, not *what*.** This codebase's comments document non-obvious reasoning and rejected alternatives. Match that density — see `src/components/signal-panel.tsx` and `src/routes/index.tsx` for the house style. Do not narrate obvious code.
 
@@ -1163,7 +1173,7 @@ git commit -m "feat: wrap satellite.js propagation in a degrees-based API"
 - Test: `src/lib/footprint.test.ts`
 
 **Interfaces:**
-- Consumes: `GeoPoint` from `@/lib/orbit`.
+- Consumes: `GeoPoint` from `./orbit.ts`.
 - Produces: `footprintPolygon(lat: number, lon: number, radiusDeg: number, steps?: number): GeoPoint[]`; `enclosedPole(lat: number, radiusDeg: number): "north" | "south" | null`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1248,7 +1258,7 @@ Create `src/lib/footprint.ts`:
 // correct there; a canvas arc() would look right near the equator and
 // visibly wrong exactly when it matters.
 
-import type { GeoPoint } from "@/lib/orbit";
+import type { GeoPoint } from "./orbit.ts";
 
 const toRad = (deg: number) => (deg * Math.PI) / 180;
 const toDeg = (rad: number) => (rad * 180) / Math.PI;
@@ -1640,7 +1650,7 @@ git commit -m "feat: compute the day/night terminator"
 - Test: `src/lib/passes.test.ts`
 
 **Interfaces:**
-- Consumes: `Observer`, `lookAngles` from `@/lib/orbit`; `SatRec` from `satellite.js`.
+- Consumes: `Observer`, `lookAngles` from `./orbit.ts`; `SatRec` from `satellite.js`.
 - Produces: `interface Pass { satId: string; aos: Date; los: Date; maxElevationDeg: number; aosAzimuth: number; losAzimuth: number }`; `nextPasses(satId: string, satrec: SatRec, observer: Observer, from: Date, hours: number): Pass[]`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1745,7 +1755,7 @@ Create `src/lib/passes.ts`:
 
 import type { SatRec } from "satellite.js";
 
-import { lookAngles, type Observer } from "@/lib/orbit";
+import { lookAngles, type Observer } from "./orbit.ts";
 
 /** Coarse search step. A NOAA pass lasts 10-16 minutes, so 30s cannot step
  * over one entirely; the shortest pass a prototype produced was 4.5
