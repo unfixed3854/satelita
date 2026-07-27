@@ -16,6 +16,7 @@ function formatClock(date: Date): string {
 function formatCountdown(ms: number): string {
   if (ms <= 0) return "now";
   const totalMinutes = Math.floor(ms / 60_000);
+  if (totalMinutes < 1) return `in ${Math.floor(ms / 1000)}s`;
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
   return hours > 0 ? `in ${hours}h ${minutes}m` : `in ${minutes}m`;

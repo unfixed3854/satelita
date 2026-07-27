@@ -33,8 +33,10 @@ const SAT_LABELS: Record<string, string> = {
  * and `--chart-2` carry any chroma in this theme — 3, 4 and 5 are
  * achromatic greys, so a satellite assigned `--chart-3` renders in exactly
  * the grey of the land and ocean beneath it and cannot be picked out at
- * all. These three hues (green 148, amber 75, cyan 220) are the ones the
- * rest of the app already uses for live readouts. */
+ * all. `--signal` and `--signal-warn` (green 148, amber 75) are what the
+ * rest of the app already uses for live readouts; `--signal-alt` (cyan 220)
+ * was added alongside this feature so NOAA-19 would have a third distinct,
+ * visible hue. */
 const SAT_COLOR_TOKENS: Record<string, string> = {
   "15": "--signal",
   "18": "--signal-warn",

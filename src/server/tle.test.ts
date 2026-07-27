@@ -10,6 +10,12 @@ const N19_L1 = "1 33591U 09005A   26207.61995983  .00000042  00000+0  46283-4 0 
 const N19_L2 = "2 33591  98.9503 278.5194 0012694 279.3580  80.6157 14.13479705900051";
 const N15_L1 = "1 25338U 98030A   26207.58735544  .00000131  00000+0  71180-4 0  9994";
 const N15_L2 = "2 25338  98.5066 227.1548 0009309 227.3169 132.7228 14.27157066466917";
+// NOAA-18's catalog number spliced into NOAA-15's real elements, with the
+// checksum digit recomputed for the new body text. Only used to exercise
+// the cache-merge logic below, never propagated, so physical accuracy for
+// NOAA-18 itself does not matter here.
+const N18_L1 = "1 28654U 98030A   26207.58735544  .00000131  00000+0  71180-4 0  9998";
+const N18_L2 = "2 28654  98.5066 227.1548 0009309 227.3169 132.7228 14.27157066466911";
 
 Deno.test("tleChecksum sums digits with '-' counting as one", () => {
   // The checksum is the last character; the sum is taken over the first 68.
@@ -30,6 +36,12 @@ Deno.test("isValidTleLine rejects a corrupted line", () => {
 
 Deno.test("isValidTleLine rejects a truncated line", () => {
   assertEquals(isValidTleLine(N19_L1.slice(0, 40)), false);
+});
+
+Deno.test("isValidTleLine rejects a 69-character line whose final character is not a digit", () => {
+  const nonDigitChecksum = `${N19_L1.slice(0, 68)}X`;
+  assertEquals(nonDigitChecksum.length, 69);
+  assertEquals(isValidTleLine(nonDigitChecksum), false);
 });
 
 Deno.test("parseTleText keys the three NOAA satellites by short id", () => {
@@ -182,6 +194,40 @@ Deno.test("getTles keeps a good cache when every request errors", async () => {
   const result = await getTles({ fetchImpl: stubFetch(RESPONSES, 503), dir, now: later });
   assertEquals(result.stale, true);
   assertEquals(Object.keys(result.sats).sort(), ["15", "19"]);
+});
+
+const FULL_RESPONSES: Record<string, string> = {
+  "25338": `NOAA 15                 \r\n${N15_L1}\r\n${N15_L2}\r\n`,
+  "28654": `NOAA 18                 \r\n${N18_L1}\r\n${N18_L2}\r\n`,
+  "33591": `NOAA 19                 \r\n${N19_L1}\r\n${N19_L2}\r\n`,
+};
+
+Deno.test("getTles keeps a satellite's cached elements when only it fails to refresh", async () => {
+  const dir = await Deno.makeTempDir();
+  const t0 = new Date("2026-07-01T00:00:00Z");
+  await getTles({ fetchImpl: stubFetch(FULL_RESPONSES), dir, now: t0 });
+
+  // Day two: NOAA-19 alone comes back empty, the other two refresh fine.
+  const laterStub = stubFetch({ ...FULL_RESPONSES, "33591": "No GP data found" });
+  const later = new Date("2026-07-02T00:00:00Z");
+  const result = await getTles({ fetchImpl: laterStub, dir, now: later });
+
+  // NOAA-19 must not be evicted — it keeps its day-one cached elements
+  // instead of vanishing because this round's fetch for it failed.
+  assertEquals(Object.keys(result.sats).sort(), ["15", "18", "19"]);
+  assertEquals(result.sats["19"], { name: "NOAA 19", line1: N19_L1, line2: N19_L2 });
+});
+
+Deno.test("getTles reports stale when a satellite's elements came from cache rather than a fresh fetch", async () => {
+  const dir = await Deno.makeTempDir();
+  const t0 = new Date("2026-07-01T00:00:00Z");
+  await getTles({ fetchImpl: stubFetch(FULL_RESPONSES), dir, now: t0 });
+
+  const laterStub = stubFetch({ ...FULL_RESPONSES, "33591": "No GP data found" });
+  const later = new Date("2026-07-02T00:00:00Z");
+  const result = await getTles({ fetchImpl: laterStub, dir, now: later });
+
+  assertEquals(result.stale, true);
 });
 
 Deno.test("getTles recovers from a corrupt cache file", async () => {

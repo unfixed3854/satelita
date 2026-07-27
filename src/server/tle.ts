@@ -5,8 +5,7 @@
 import { appDataDir } from "./paths.ts";
 
 /** NORAD catalog number -> the short satellite id used throughout the app
- * (and by CapturePanel's SATS list). Celestrak's "noaa" group carries far
- * more than these three; everything else is discarded on parse. */
+ * (and by CapturePanel's SATS list). */
 export const NOAA_CATALOG: Record<string, string> = {
   "25338": "15",
   "28654": "18",
@@ -100,7 +99,10 @@ export interface GetTlesOptions {
 async function readCache(dir: string): Promise<TleCache | null> {
   try {
     const parsed = JSON.parse(await Deno.readTextFile(`${dir}/tle.json`)) as TleCache;
-    if (typeof parsed?.fetchedAt !== "string" || typeof parsed?.sats !== "object") return null;
+    if (typeof parsed?.fetchedAt !== "string") return null;
+    if (typeof parsed?.sats !== "object" || parsed.sats === null || Array.isArray(parsed.sats)) {
+      return null;
+    }
     if (Object.keys(parsed.sats).length === 0) return null;
     return parsed;
   } catch {
@@ -149,12 +151,27 @@ export async function getTles(opts: GetTlesOptions = {}): Promise<TleResult> {
       }),
     );
 
-    const sats = Object.assign({}, ...results) as Record<string, TleSet>;
-    if (Object.keys(sats).length === 0) throw new Error("No usable element sets in response");
+    const fresh = Object.assign({}, ...results) as Record<string, TleSet>;
+    if (Object.keys(fresh).length === 0) throw new Error("No usable element sets in response");
+
+    // Fresh results are merged OVER the cache read above (not used in place
+    // of it), so a satellite whose fetch failed this round keeps its
+    // last-known-good elements instead of being evicted from the file. If a
+    // satellite has neither a fresh result nor a prior cache entry it is
+    // simply absent, exactly as before.
+    const sats = Object.assign({}, cache?.sats ?? {}, fresh) as Record<string, TleSet>;
+
+    // A satellite is only "stale" when its entry in `sats` came from the
+    // cache rather than this round's fetch — that is the case the banner
+    // needs to warn about, as distinct from a satellite that is simply
+    // absent because it has never been cached.
+    const staleFromCache = Object.values(NOAA_CATALOG).some(
+      (satId) => !(satId in fresh) && satId in sats,
+    );
 
     const updated: TleCache = { fetchedAt: now.toISOString(), sats };
     await writeCache(dir, updated);
-    return { sats, fetchedAt: updated.fetchedAt, stale: false };
+    return { sats, fetchedAt: updated.fetchedAt, stale: staleFromCache };
   } catch (err) {
     if (cache) return { sats: cache.sats, fetchedAt: cache.fetchedAt, stale: true };
     throw err;

@@ -22,6 +22,16 @@ const REFINE_PRECISION_MS = 1000;
 /** Step for the peak-elevation scan within a bracketed pass. */
 const PEAK_STEP_MS = 5000;
 
+/** How far before `from` the coarse scan starts. A satellite can already be
+ * above the horizon at `from` — mid-pass — and the crossing-based loop below
+ * only records a pass when it *sees* the upward crossing, so without this
+ * lookback that in-progress pass would have no AOS bracket and would be
+ * silently dropped when it set. Starting the scan earlier lets the normal
+ * crossing logic find its true AOS instead. 20 minutes comfortably exceeds
+ * the ~16 minute maximum NOAA pass, so any pass live at `from` is guaranteed
+ * to have risen within the lookback window. */
+const PASS_LOOKBACK_MS = 20 * 60_000;
+
 export interface Pass {
   satId: string;
   aos: Date;
@@ -67,12 +77,13 @@ export function nextPasses(
 ): Pass[] {
   const start = from.getTime();
   const end = start + hours * 3600_000;
+  const scanStart = start - PASS_LOOKBACK_MS;
   const passes: Pass[] = [];
 
-  let previousElevation = elevationAt(satrec, observer, start);
+  let previousElevation = elevationAt(satrec, observer, scanStart);
   let aosBracketMs: number | null = null;
 
-  for (let ms = start + COARSE_STEP_MS; ms <= end; ms += COARSE_STEP_MS) {
+  for (let ms = scanStart + COARSE_STEP_MS; ms <= end; ms += COARSE_STEP_MS) {
     const elevation = elevationAt(satrec, observer, ms);
 
     if (previousElevation < 0 && elevation >= 0) aosBracketMs = ms;
@@ -110,6 +121,8 @@ export function nextPasses(
   }
 
   // A pass still in progress at the end of the window is dropped rather
-  // than reported with a fabricated LOS.
-  return passes;
+  // than reported with a fabricated LOS. A pass that already ended before
+  // `from` (found only because the scan looks back before `from` to catch
+  // one in progress) is dropped too — it is history, not upcoming.
+  return passes.filter((p) => p.los.getTime() >= start);
 }

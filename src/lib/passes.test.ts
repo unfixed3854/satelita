@@ -73,3 +73,17 @@ Deno.test("a station at the antipode of the orbit still returns a sane list", ()
 Deno.test("a zero-hour window yields no passes", () => {
   assertEquals(nextPasses("19", satrec(), WARSAW, FROM, 0).length, 0);
 });
+
+Deno.test("a pass already in progress at `from` is still returned with its true AOS", () => {
+  const rec = satrec();
+  const first = nextPasses("19", rec, WARSAW, FROM, 24)[0];
+
+  // Search again from a point mid-pass. Without the lookback, the coarse
+  // loop never sees the rising crossing, so this pass would have no AOS
+  // bracket and would be dropped entirely when it set.
+  const midPass = new Date(first.aos.getTime() + 60_000);
+  const again = nextPasses("19", rec, WARSAW, midPass, 24);
+
+  assertEquals(again[0].aos.getTime(), first.aos.getTime());
+  assertEquals(again[0].los.getTime(), first.los.getTime());
+});
