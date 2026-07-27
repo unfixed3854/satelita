@@ -941,6 +941,41 @@ Deno.test("groundTrack samples the requested window at the requested step", () =
   }
 });
 
+// A TLE whose argument-of-perigee field is non-numeric. This survives
+// toSatrec's guard — sgp4init recomputes `no` and `jdsatepoch` from other
+// fields, so both stay finite — but propagate then returns a NON-null
+// result carrying {x: null, y: null, z: null}. Verified against the
+// installed satellite.js@7.1.0. It is the narrowest input that reaches the
+// NaN path, which is why it is used rather than wholesale garbage.
+const N19_BAD_ARGP = {
+  line1: N19.line1,
+  line2: "2 33591  98.9503 278.5194 0012694 ABCDEFGH  80.6157 14.13479705900051",
+};
+
+Deno.test("lookAngles returns null rather than NaN angles", () => {
+  const satrec = toSatrec(N19_BAD_ARGP);
+  // Confirms the premise: this really does get past toSatrec.
+  assert(satrec !== null, "fixture should survive toSatrec, or it tests nothing");
+  assertEquals(lookAngles(satrec, { lat: 52.23, lon: 21.01, altM: 100 }, AT), null);
+});
+
+Deno.test("a NaN elevation would defeat both pass-bracketing comparisons", () => {
+  // Guards the guard: this documents WHY lookAngles must return null
+  // instead of NaN. passes.ts brackets a pass with these two comparisons,
+  // and NaN makes both false, so the satellite would never appear to rise.
+  const nan = Number.NaN;
+  assertEquals(nan < 0, false);
+  assertEquals(nan >= 0, false);
+});
+
+Deno.test("groundTrack drops unusable points without breaking the run", () => {
+  const satrec = toSatrec(N19_BAD_ARGP);
+  assert(satrec !== null);
+  // Every sample is unusable for this fixture, so the track is empty
+  // rather than an array of NaN coordinates.
+  assertEquals(groundTrack(satrec, AT, new Date(AT.getTime() + 600_000), 60), []);
+});
+
 Deno.test("footprintRadiusDeg matches the geometry for a NOAA orbit", () => {
   // acos(6371 / (6371 + 868.9)) = 28.36 degrees.
   assert(Math.abs(footprintRadiusDeg(868.9) - 28.3595) < 0.001);
@@ -976,7 +1011,11 @@ import {
   twoline2satrec,
 } from "satellite.js";
 
-/** Mean Earth radius, matching the value satellite.js uses internally. */
+/** Mean Earth radius. Deliberately the spherical mean rather than either
+ * ellipsoid radius satellite.js carries internally (6378.135 for SGP4's
+ * WGS72, 6378.137 for WGS84 transforms): the footprint is a circle on a
+ * sphere by construction, so the mean radius is the self-consistent
+ * choice. The difference is under 0.1 degrees of footprint radius. */
 const EARTH_RADIUS_KM = 6371;
 
 export interface Observer {
@@ -1052,6 +1091,12 @@ export function subpoint(satrec: SatRec, date: Date): Subpoint | null {
   return { lat, lon, altKm: geo.height };
 }
 
+/** Same two-layer guard as subpoint, and for a sharper reason: passes.ts
+ * brackets a pass with `elevation < 0` and `elevation >= 0` comparisons,
+ * and BOTH are false for NaN. An unguarded NaN elevation would not throw
+ * or log — the satellite would simply never appear to rise, silently
+ * vanishing from pass prediction. Returning null makes the absence
+ * explicit at the boundary. */
 export function lookAngles(
   satrec: SatRec,
   observer: Observer,
@@ -1063,11 +1108,15 @@ export function lookAngles(
     observerGeodetic(observer),
     eciToEcf(pv.position, gstime(date)),
   );
-  return {
-    elevationDeg: radiansToDegrees(look.elevation),
-    azimuthDeg: radiansToDegrees(look.azimuth),
-    rangeKm: look.rangeSat,
-  };
+  const elevationDeg = radiansToDegrees(look.elevation);
+  const azimuthDeg = radiansToDegrees(look.azimuth);
+  if (
+    !Number.isFinite(elevationDeg) || !Number.isFinite(azimuthDeg) ||
+    !Number.isFinite(look.rangeSat)
+  ) {
+    return null;
+  }
+  return { elevationDeg, azimuthDeg, rangeKm: look.rangeSat };
 }
 
 /** Inclusive of both endpoints. Points SGP4 cannot produce are skipped
@@ -1096,7 +1145,7 @@ export function footprintRadiusDeg(altKm: number): number {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `deno test --allow-env --allow-read --allow-write src/lib/orbit.test.ts`
-Expected: PASS — 7 tests.
+Expected: PASS — 10 tests.
 
 - [ ] **Step 5: Commit**
 
