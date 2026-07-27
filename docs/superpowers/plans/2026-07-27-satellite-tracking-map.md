@@ -2683,7 +2683,9 @@ export function useTracking(station: Station | null) {
       );
     }
     return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Deliberately excludes `now`: the whole point is that tracks refresh
+    // on trackTick's slower schedule, and listing `now` here would rebuild
+    // them every second.
   }, [satrecs, trackTick]);
 
   const satellites = useMemo<MapSatellite[]>(() => {
@@ -2710,7 +2712,8 @@ export function useTracking(station: Station | null) {
       all.push(...nextPasses(id, satrec, station, at, PASS_WINDOW_HOURS));
     }
     return all.sort((a, b) => a.aos.getTime() - b.aos.getTime());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Deliberately excludes `now` (read via nowRef): passes refresh on
+    // passTick's 5-minute schedule, not once a second.
   }, [satrecs, station, passTick]);
 
   return {
