@@ -102,7 +102,7 @@ function Tracking() {
       <section className="relative min-h-0 overflow-hidden">
         {(stale || elementsAgeDays > STALE_WARNING_DAYS) && (
           <div className="absolute top-2 left-2 z-10 rounded-md border border-border bg-popover px-2.5 py-1 font-mono text-[11px] text-muted-foreground">
-            {stale ? "Offline — using cached elements" : null}
+            {stale ? "Some elements could not be refreshed" : null}
             {!stale && `Elements are ${Math.floor(elementsAgeDays)} days old`}
           </div>
         )}
