@@ -768,7 +768,7 @@ Append to `src/server/functions.ts` (and add the imports at the top of the file)
 
 ```ts
 import { lookupCoordinates } from "./geoip.ts";
-import { type Station, readStation, writeStation } from "./station.ts";
+import { isValidStation, type Station, readStation, writeStation } from "./station.ts";
 import { getTles, type TleResult } from "./tle.ts";
 ```
 
@@ -785,15 +785,22 @@ export const getStationFn = createServerFn({ method: "GET" }).handler(
   },
 );
 
-// The `{ lat, lon, altM }` annotation is erased at build time, so the
-// validator is the only runtime guard standing between a malformed request
-// and a station.json the tracking route would then read back as "unset".
+// The `{ lat, lon, altM }` annotation is erased at build time, so this
+// validator is the request's first real runtime guard — it fails fast at
+// the boundary rather than letting a malformed payload travel down to
+// writeStation, which validates again before touching disk. Same
+// belt-and-braces shape as deleteRecordingFn above.
 export const setStationFn = createServerFn({ method: "POST" })
-  .validator((data: { lat: number; lon: number; altM: number }) => data)
-  .handler(async ({ data }): Promise<Station> => {
+  .validator((data: { lat: number; lon: number; altM: number }): Station => {
     const station: Station = { ...data, source: "manual" };
-    await writeStation(station);
+    if (!isValidStation(station)) {
+      throw new Error(`Invalid station: ${JSON.stringify(data)}`);
+    }
     return station;
+  })
+  .handler(async ({ data }): Promise<Station> => {
+    await writeStation(data);
+    return data;
   });
 
 // Runs only when getStationFn returned null, or when the operator presses
@@ -862,7 +869,26 @@ const N19 = {
 const AT = new Date("2026-07-27T12:00:00Z");
 
 Deno.test("toSatrec returns null for unusable elements", () => {
+  // satellite.js 7 does NOT flag these: twoline2satrec returns a SatRec
+  // full of NaN with error === 0, and propagating it yields a non-null
+  // result carrying null components. Verified against the installed
+  // library — if this test fails, the NaN guard has been removed.
   assertEquals(toSatrec({ line1: "garbage", line2: "garbage" }), null);
+  assertEquals(toSatrec({ line1: "", line2: "" }), null);
+  assertEquals(toSatrec({ line1: "1 33591U 09005A", line2: "2 33591" }), null);
+});
+
+Deno.test("a satrec that survives toSatrec never yields a NaN subpoint", () => {
+  const satrec = toSatrec(N19);
+  assert(satrec !== null);
+  // Well past the element epoch, where SGP4 accuracy collapses, subpoint
+  // must still return either real coordinates or null — never NaN.
+  for (const daysOut of [0, 30, 365, 3650]) {
+    const sp = subpoint(satrec, new Date(AT.getTime() + daysOut * 86_400_000));
+    if (sp === null) continue;
+    assert(Number.isFinite(sp.lat) && Number.isFinite(sp.lon), `NaN at +${daysOut}d`);
+    assert(Number.isFinite(sp.altKm), `NaN altitude at +${daysOut}d`);
+  }
 });
 
 Deno.test("subpoint puts NOAA-19 in its ~850km orbit", () => {
@@ -986,28 +1012,44 @@ function observerGeodetic(observer: Observer) {
   };
 }
 
-/** Returns null rather than throwing for element sets SGP4 rejects, so a
- * single bad satellite in the cache cannot take down the whole map. */
+/** Returns null rather than throwing for element sets SGP4 cannot use, so a
+ * single bad satellite in the cache cannot take down the whole map.
+ *
+ * `satrec.error` alone is not a sufficient test. satellite.js 7's
+ * `sgp4init` sets `error = 0` unconditionally — its one invalid-elements
+ * check is commented out upstream as "unnecessary" — so unparseable lines
+ * come back as a SatRec whose numeric fields are all NaN with no error
+ * flagged. Propagating that returns a *non-null* result carrying
+ * `{x: null, y: null, z: null}`, which converts to NaN latitude and
+ * longitude and would draw a satellite at an impossible point on the map.
+ * Checking the parsed elements ourselves is the only reliable guard. */
 export function toSatrec(tle: { line1: string; line2: string }): SatRec | null {
   try {
     const satrec = twoline2satrec(tle.line1, tle.line2);
-    return satrec.error === 0 ? satrec : null;
+    if (satrec.error !== 0) return null;
+    if (!Number.isFinite(satrec.no) || !Number.isFinite(satrec.jdsatepoch)) return null;
+    return satrec;
   } catch {
     return null;
   }
 }
 
 /** satellite.js v7's propagate returns null on failure — it does not
- * return `{ position: false }` as v5 did. Every caller must handle null. */
+ * return `{ position: false }` as v5 did. Every caller must handle null.
+ *
+ * The finite check is the second half of toSatrec's guard: propagate can
+ * hand back a populated object whose components are null, and a NaN
+ * subpoint drawn on the canvas is a far worse failure than a missing one. */
 export function subpoint(satrec: SatRec, date: Date): Subpoint | null {
   const pv = propagate(satrec, date);
   if (!pv) return null;
   const geo = eciToGeodetic(pv.position, gstime(date));
-  return {
-    lat: degreesLat(geo.latitude),
-    lon: degreesLong(geo.longitude),
-    altKm: geo.height,
-  };
+  const lat = degreesLat(geo.latitude);
+  const lon = degreesLong(geo.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(geo.height)) {
+    return null;
+  }
+  return { lat, lon, altKm: geo.height };
 }
 
 export function lookAngles(
@@ -1054,7 +1096,7 @@ export function footprintRadiusDeg(altKm: number): number {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `deno test --allow-env --allow-read --allow-write src/lib/orbit.test.ts`
-Expected: PASS — 6 tests.
+Expected: PASS — 7 tests.
 
 - [ ] **Step 5: Commit**
 
