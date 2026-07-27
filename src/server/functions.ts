@@ -8,7 +8,7 @@ import {
   parseRecordingId,
   type Recording,
 } from "./recordings.ts";
-import { type Station, readStation, writeStation } from "./station.ts";
+import { isValidStation, type Station, readStation, writeStation } from "./station.ts";
 import { getTles, type TleResult } from "./tle.ts";
 
 type StartInput = { sat: string; gain: string; device: number };
@@ -60,15 +60,22 @@ export const getStationFn = createServerFn({ method: "GET" }).handler(
   },
 );
 
-// The `{ lat, lon, altM }` annotation is erased at build time, so the
-// validator is the only runtime guard standing between a malformed request
-// and a station.json the tracking route would then read back as "unset".
+// The `{ lat, lon, altM }` annotation is erased at build time, so this
+// validator is the request's first real runtime guard — it fails fast at
+// the boundary rather than letting a malformed payload travel down to
+// writeStation, which validates again before touching disk. Same
+// belt-and-braces shape as deleteRecordingFn above.
 export const setStationFn = createServerFn({ method: "POST" })
-  .validator((data: { lat: number; lon: number; altM: number }) => data)
-  .handler(async ({ data }): Promise<Station> => {
+  .validator((data: { lat: number; lon: number; altM: number }): Station => {
     const station: Station = { ...data, source: "manual" };
-    await writeStation(station);
+    if (!isValidStation(station)) {
+      throw new Error(`Invalid station: ${JSON.stringify(data)}`);
+    }
     return station;
+  })
+  .handler(async ({ data }): Promise<Station> => {
+    await writeStation(data);
+    return data;
   });
 
 // Runs only when getStationFn returned null, or when the operator presses
