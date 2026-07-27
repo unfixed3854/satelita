@@ -3,13 +3,38 @@
 Items found during review of the tracking-map feature (spec:
 `docs/superpowers/specs/2026-07-27-satellite-tracking-map-design.md`, plan:
 `docs/superpowers/plans/2026-07-27-satellite-tracking-map.md`) that were
-deliberately not fixed at the time. None blocks the feature — it ships with
-104 passing tests, a clean build, and end-to-end verification against live
-Celestrak data. They are recorded here so they are decisions rather than
-oversights.
+deliberately not fixed at the time. They are recorded here so they are
+decisions rather than oversights.
 
 Line numbers were accurate at the time of writing; search by symbol if they
 have drifted.
+
+## Already resolved
+
+A whole-branch review after merge found two Important defects that the
+per-task reviews could not see, because each had only ever looked at one
+task's diff. Both are fixed in `c261830`, with `12c1f8f` correcting a banner
+message the first fix made inaccurate:
+
+- **A pass in progress vanished from the list.** `nextPasses` only recorded
+  a pass after seeing an upward horizon crossing, so a satellite already
+  risen when the search began was silently dropped. Since the hook
+  recomputes every five minutes, the row for the pass being recorded
+  disappeared partway through it, and the "NOW" highlight was effectively
+  unreachable. Fixed by scanning from 20 minutes before the window and
+  discarding passes that ended before it, so the in-progress pass is found
+  with its true AOS.
+- **One failed request evicted a satellite's cached elements.** `getTles`
+  merged the three fetch results with each other but never with the cache,
+  then overwrote the file — so a satellite Celestrak briefly could not serve
+  disappeared for 24 hours, reporting `stale: false` so nothing warned about
+  it. Fixed by merging fresh results over cached ones and reporting `stale`
+  when an entry came from cache.
+
+Also fixed in the same wave: the "in 0m" countdown now shows seconds;
+`readCache` rejects a JSON array; `isValidTleLine`'s non-digit-checksum
+branch has a test; and two comments that stated things the code did not do
+were corrected. Suite went from 104 to 108 tests.
 
 ## Worth fixing
 
@@ -32,15 +57,6 @@ modules to dodge the barrel is not possible without patching. Options: leave
 it, patch the dependency, or hand-roll the two functions actually used
 (`sunPos` and `gstime` for the subsolar point) and drop the client-side
 dependency entirely.
-
-### 2. A pass under a minute away reads "in 0m"
-
-`src/components/pass-list.tsx:16` — `formatCountdown`
-
-Floors to whole minutes, so a pass 30–59 seconds out displays `in 0m`. This
-lands on the app's core workflow: the pass list exists to tell an operator
-when to start recording, and the last minute before AOS is exactly when the
-readout matters most. Showing seconds below one minute would fix it.
 
 ### 3. NOAA-18 is tracked but can no longer be recorded
 
@@ -69,23 +85,15 @@ non-polar-orbit satellites are ever added.
 
 ### 5. Station settings re-serialises the operator's typed text
 
-`src/components/station-settings.tsx:33`
+`src/components/station-settings.tsx` — the re-seed `useEffect`
 
 The effect that re-seeds the inputs from the `station` prop also fires after
 a successful save, so `12.3400` comes back as `12.34`. Correct, mildly
 surprising to watch.
 
-### 6. `readCache`'s shape guard would accept a JSON array
-
-`src/server/tle.ts:103`
-
-`typeof parsed?.sats !== "object"` passes for an array. Not reachable —
-`writeCache` is the only writer and always writes the right shape — but
-`Array.isArray` would close it.
-
 ### 7. `maxElevationDeg` is seeded at 0 rather than -90
 
-`src/lib/passes.ts:90`
+`src/lib/passes.ts:101`
 
 Theoretically fragile for a vanishingly brief grazing pass whose sampled
 peak never exceeds zero. Does not manifest at real NOAA pass durations
@@ -94,17 +102,12 @@ it.
 
 ### 8. Split `@std/assert` import
 
-`src/server/tle.test.ts:1` and `:68`
+`src/server/tle.test.ts:1` and `:80`
 
 Two import statements from the same module, an artefact of the file being
 written across two tasks. Cosmetic.
 
 ## Test-coverage gaps
-
-### 9. No test for a 69-character TLE line ending in a non-digit
-
-`src/server/tle.ts` — `isValidTleLine` rejects it via an explicit branch, but
-nothing exercises that branch.
 
 ### 10. `enclosedPole`'s exact boundary is untested
 
