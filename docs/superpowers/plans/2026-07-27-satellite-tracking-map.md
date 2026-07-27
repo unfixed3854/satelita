@@ -78,16 +78,19 @@ import { assertEquals } from "@std/assert";
 
 import { isValidTleLine, parseTleText, tleChecksum } from "./tle.ts";
 
-// Real NOAA-19 elements. Both lines carry valid checksum digits.
-const N19_L1 = "1 33591U 09005A   24069.51782528  .00000267  00000+0  15776-3 0  9993";
-const N19_L2 = "2 33591  99.0430 128.5147 0013936 245.4055 114.5747 14.12775846775777";
-const N15_L1 = "1 25338U 98030A   24069.87186807  .00000212  00000+0  10859-3 0  9994";
-const N15_L2 = "2 25338  98.6206 105.1349 0011146 100.2325 260.0072 14.26555114345183";
+// Real element sets fetched from Celestrak (epoch 26207). Every line here
+// carries its genuine checksum digit — do not retype or "tidy" them, and do
+// not adjust the expected values below to make a failing test pass. If these
+// ever fail, the implementation is wrong, not the data.
+const N19_L1 = "1 33591U 09005A   26207.61995983  .00000042  00000+0  46283-4 0  9994";
+const N19_L2 = "2 33591  98.9503 278.5194 0012694 279.3580  80.6157 14.13479705900051";
+const N15_L1 = "1 25338U 98030A   26207.58735544  .00000131  00000+0  71180-4 0  9994";
+const N15_L2 = "2 25338  98.5066 227.1548 0009309 227.3169 132.7228 14.27157066466917";
 
 Deno.test("tleChecksum sums digits with '-' counting as one", () => {
   // The checksum is the last character; the sum is taken over the first 68.
-  assertEquals(tleChecksum(N19_L1), 3);
-  assertEquals(tleChecksum(N19_L2), 7);
+  assertEquals(tleChecksum(N19_L1), 4);
+  assertEquals(tleChecksum(N19_L2), 1);
 });
 
 Deno.test("isValidTleLine accepts real element lines", () => {
@@ -115,11 +118,22 @@ Deno.test("parseTleText keys the three NOAA satellites by short id", () => {
 });
 
 Deno.test("parseTleText ignores satellites outside the catalog", () => {
-  // METOP-B is in Celestrak's noaa group but is not an APT satellite.
-  const other1 = "1 38771U 12049A   24069.50000000  .00000100  00000+0  60000-4 0  9999";
-  const other2 = "2 38771  98.7000 100.0000 0001000  90.0000 270.0000 14.21500000000010";
-  const text = `METOP-B\n${other1}\n${other2}\nNOAA 19\n${N19_L1}\n${N19_L2}\n`;
+  // Real DMSP 5D-3 F16 elements — a weather satellite that is not an APT
+  // satellite, so it must be filtered out by catalog number.
+  const other1 = "1 28054U 03048A   26207.58535321  .00000021  00000+0  34680-4 0  9990";
+  const other2 = "2 28054  98.9888 231.6728 0007770  42.8290 122.8338 14.14485310175052";
+  const text = `DMSP 5D-3 F16 (USA 172)\n${other1}\n${other2}\nNOAA 19\n${N19_L1}\n${N19_L2}\n`;
   assertEquals(Object.keys(parseTleText(text)), ["19"]);
+});
+
+Deno.test("parseTleText handles Celestrak's CRLF line endings", () => {
+  // Celestrak serves \r\n and pads name lines with trailing spaces. Both
+  // would push every line past the 69-character check if left in place.
+  const text = `NOAA 19                 \r\n${N19_L1}\r\n${N19_L2}\r\n`;
+  const parsed = parseTleText(text);
+  assertEquals(Object.keys(parsed), ["19"]);
+  assertEquals(parsed["19"].name, "NOAA 19");
+  assertEquals(parsed["19"].line1, N19_L1);
 });
 
 Deno.test("parseTleText drops element sets that fail validation", () => {
@@ -207,7 +221,7 @@ export function parseTleText(text: string): Record<string, TleSet> {
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `deno test --allow-env --allow-read --allow-write src/server/tle.test.ts`
-Expected: PASS — 7 tests.
+Expected: PASS — 8 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -237,21 +251,30 @@ import { assert, assertRejects } from "@std/assert";
 
 import { getTles } from "./tle.ts";
 
-const FEED = `NOAA 19\n${N19_L1}\n${N19_L2}\nNOAA 15\n${N15_L1}\n${N15_L2}\n`;
+// getTles issues one request per satellite, so the stub answers based on
+// the CATNR in the URL — mirroring Celestrak's real per-satellite responses.
+const RESPONSES: Record<string, string> = {
+  "25338": `NOAA 15                 \r\n${N15_L1}\r\n${N15_L2}\r\n`,
+  "33591": `NOAA 19                 \r\n${N19_L1}\r\n${N19_L2}\r\n`,
+  "28654": "No GP data found",
+};
 
-function stubFetch(body: string, ok = true): typeof fetch {
-  return (() =>
-    Promise.resolve(
-      new Response(body, { status: ok ? 200 : 500 }),
-    )) as unknown as typeof fetch;
+function stubFetch(bodies: Record<string, string> = RESPONSES, status = 200): typeof fetch {
+  return ((url: string) => {
+    const catnr = new URL(url).searchParams.get("CATNR") ?? "";
+    return Promise.resolve(new Response(bodies[catnr] ?? "No GP data found", { status }));
+  }) as unknown as typeof fetch;
 }
 
 const failingFetch = (() => Promise.reject(new Error("offline"))) as unknown as typeof fetch;
 
 Deno.test("getTles fetches and writes a cache when none exists", async () => {
   const dir = await Deno.makeTempDir();
-  const result = await getTles({ fetchImpl: stubFetch(FEED), dir });
+  const result = await getTles({ fetchImpl: stubFetch(), dir });
 
+  // NOAA-18's stubbed response carries no elements, so a partial result is
+  // the expected outcome — one satellite Celestrak cannot serve must not
+  // cost us the other two.
   assertEquals(Object.keys(result.sats).sort(), ["15", "19"]);
   assertEquals(result.stale, false);
 
@@ -259,9 +282,22 @@ Deno.test("getTles fetches and writes a cache when none exists", async () => {
   assertEquals(Object.keys(cached.sats).sort(), ["15", "19"]);
 });
 
+Deno.test("getTles requests each catalogued satellite once", async () => {
+  const dir = await Deno.makeTempDir();
+  const seen: string[] = [];
+  const spy = ((url: string) => {
+    const catnr = new URL(url).searchParams.get("CATNR") ?? "";
+    seen.push(catnr);
+    return Promise.resolve(new Response(RESPONSES[catnr] ?? "No GP data found"));
+  }) as unknown as typeof fetch;
+
+  await getTles({ fetchImpl: spy, dir });
+  assertEquals(seen.sort(), ["25338", "28654", "33591"]);
+});
+
 Deno.test("getTles serves a fresh cache without any network call", async () => {
   const dir = await Deno.makeTempDir();
-  await getTles({ fetchImpl: stubFetch(FEED), dir });
+  await getTles({ fetchImpl: stubFetch(), dir });
 
   let called = false;
   const spy = (() => {
@@ -278,10 +314,10 @@ Deno.test("getTles serves a fresh cache without any network call", async () => {
 Deno.test("getTles refetches once the cache passes 24 hours", async () => {
   const dir = await Deno.makeTempDir();
   const t0 = new Date("2026-07-01T00:00:00Z");
-  await getTles({ fetchImpl: stubFetch(FEED), dir, now: t0 });
+  await getTles({ fetchImpl: stubFetch(), dir, now: t0 });
 
   const later = new Date("2026-07-02T01:00:00Z");
-  const result = await getTles({ fetchImpl: stubFetch(FEED), dir, now: later });
+  const result = await getTles({ fetchImpl: stubFetch(), dir, now: later });
   assertEquals(result.fetchedAt, later.toISOString());
   assertEquals(result.stale, false);
 });
@@ -289,7 +325,7 @@ Deno.test("getTles refetches once the cache passes 24 hours", async () => {
 Deno.test("getTles falls back to a stale cache when the network fails", async () => {
   const dir = await Deno.makeTempDir();
   const t0 = new Date("2026-07-01T00:00:00Z");
-  await getTles({ fetchImpl: stubFetch(FEED), dir, now: t0 });
+  await getTles({ fetchImpl: stubFetch(), dir, now: t0 });
 
   const later = new Date("2026-07-10T00:00:00Z");
   const result = await getTles({ fetchImpl: failingFetch, dir, now: later });
@@ -303,17 +339,29 @@ Deno.test("getTles throws when there is no cache and no network", async () => {
   await assertRejects(() => getTles({ fetchImpl: failingFetch, dir }));
 });
 
-Deno.test("getTles keeps a good cache when the response is garbage", async () => {
+Deno.test("getTles keeps a good cache when every response is garbage", async () => {
   const dir = await Deno.makeTempDir();
   const t0 = new Date("2026-07-01T00:00:00Z");
-  await getTles({ fetchImpl: stubFetch(FEED), dir, now: t0 });
+  await getTles({ fetchImpl: stubFetch(), dir, now: t0 });
+
+  const captivePortal = stubFetch({
+    "25338": "<html>captive portal</html>",
+    "28654": "<html>captive portal</html>",
+    "33591": "<html>captive portal</html>",
+  });
+  const later = new Date("2026-07-10T00:00:00Z");
+  const result = await getTles({ fetchImpl: captivePortal, dir, now: later });
+  assertEquals(result.stale, true);
+  assertEquals(Object.keys(result.sats).sort(), ["15", "19"]);
+});
+
+Deno.test("getTles keeps a good cache when every request errors", async () => {
+  const dir = await Deno.makeTempDir();
+  const t0 = new Date("2026-07-01T00:00:00Z");
+  await getTles({ fetchImpl: stubFetch(), dir, now: t0 });
 
   const later = new Date("2026-07-10T00:00:00Z");
-  const result = await getTles({
-    fetchImpl: stubFetch("<html>captive portal</html>"),
-    dir,
-    now: later,
-  });
+  const result = await getTles({ fetchImpl: stubFetch(RESPONSES, 503), dir, now: later });
   assertEquals(result.stale, true);
   assertEquals(Object.keys(result.sats).sort(), ["15", "19"]);
 });
@@ -321,7 +369,7 @@ Deno.test("getTles keeps a good cache when the response is garbage", async () =>
 Deno.test("getTles recovers from a corrupt cache file", async () => {
   const dir = await Deno.makeTempDir();
   await Deno.writeTextFile(`${dir}/tle.json`, "{not json");
-  const result = await getTles({ fetchImpl: stubFetch(FEED), dir });
+  const result = await getTles({ fetchImpl: stubFetch(), dir });
   assert(Object.keys(result.sats).length > 0);
 });
 ```
@@ -338,7 +386,14 @@ Append to `src/server/tle.ts`:
 ```ts
 import { appDataDir } from "./paths.ts";
 
-const CELESTRAK_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP=noaa&FORMAT=tle";
+/** Celestrak has no group containing NOAA-15/18/19 — its "weather" group
+ * carries only the newer JPSS birds (NOAA 20/21), and there is no "noaa"
+ * group at all. So these are fetched one CATNR at a time: three small
+ * requests a day, which the 24h cache keeps well inside Celestrak's
+ * usage guidance. */
+function catalogUrl(catalogNumber: string): string {
+  return `https://celestrak.org/NORAD/elements/gp.php?CATNR=${catalogNumber}&FORMAT=tle`;
+}
 
 /** Celestrak asks clients not to poll aggressively, and element sets are
  * only reissued a few times a day. */
@@ -396,12 +451,26 @@ export async function getTles(opts: GetTlesOptions = {}): Promise<TleResult> {
   }
 
   try {
-    const res = await fetchImpl(CELESTRAK_URL);
-    if (!res.ok) throw new Error(`Celestrak returned ${res.status}`);
-    const sats = parseTleText(await res.text());
-    // An empty parse means the body was not a TLE feed at all — a captive
-    // portal, an error page. Treated exactly like a failed fetch so a good
-    // cache survives it.
+    // Per-satellite results are merged, and one satellite failing is
+    // survivable: Celestrak occasionally has no current elements for a
+    // given bird, and losing all three over one 404 would be worse than
+    // drawing the two that did arrive.
+    const results = await Promise.all(
+      Object.keys(NOAA_CATALOG).map(async (catalogNumber) => {
+        try {
+          const res = await fetchImpl(catalogUrl(catalogNumber));
+          if (!res.ok) return {};
+          // An unparseable body is not a TLE feed at all — Celestrak's
+          // "No GP data found", a captive portal, an error page. Treated
+          // exactly like a failed request.
+          return parseTleText(await res.text());
+        } catch {
+          return {};
+        }
+      }),
+    );
+
+    const sats = Object.assign({}, ...results) as Record<string, TleSet>;
     if (Object.keys(sats).length === 0) throw new Error("No usable element sets in response");
 
     const updated: TleCache = { fetchedAt: now.toISOString(), sats };
@@ -417,7 +486,7 @@ export async function getTles(opts: GetTlesOptions = {}): Promise<TleResult> {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `deno test --allow-env --allow-read --allow-write src/server/tle.test.ts`
-Expected: PASS — 14 tests.
+Expected: PASS — 17 tests (8 from Task 1, 9 here).
 
 - [ ] **Step 5: Commit**
 
@@ -783,13 +852,14 @@ import {
   toSatrec,
 } from "./orbit.ts";
 
-// Real NOAA-19 elements, epoch 2024-069. Fixed so every assertion below is
-// deterministic rather than drifting with the current date.
+// Real NOAA-19 elements from Celestrak, epoch 26207. The date is fixed so
+// every assertion below is deterministic rather than drifting with the
+// wall clock — SGP4 propagates from the element epoch, not from "now".
 const N19 = {
-  line1: "1 33591U 09005A   24069.51782528  .00000267  00000+0  15776-3 0  9993",
-  line2: "2 33591  99.0430 128.5147 0013936 245.4055 114.5747 14.12775846775777",
+  line1: "1 33591U 09005A   26207.61995983  .00000042  00000+0  46283-4 0  9994",
+  line2: "2 33591  98.9503 278.5194 0012694 279.3580  80.6157 14.13479705900051",
 };
-const AT = new Date("2024-03-09T12:00:00Z");
+const AT = new Date("2026-07-27T12:00:00Z");
 
 Deno.test("toSatrec returns null for unusable elements", () => {
   assertEquals(toSatrec({ line1: "garbage", line2: "garbage" }), null);
@@ -801,10 +871,10 @@ Deno.test("subpoint puts NOAA-19 in its ~850km orbit", () => {
   const sp = subpoint(satrec, AT);
   assert(sp !== null);
 
-  // Verified against satellite.js directly: lat -80.99, lon -125.60, alt 868.9km.
-  assert(Math.abs(sp.lat - -80.9866) < 0.01, `lat ${sp.lat}`);
-  assert(Math.abs(sp.lon - -125.5994) < 0.01, `lon ${sp.lon}`);
-  assert(Math.abs(sp.altKm - 868.86) < 1, `alt ${sp.altKm}`);
+  // Verified against satellite.js directly with these exact elements.
+  assert(Math.abs(sp.lat - 24.2397) < 0.01, `lat ${sp.lat}`);
+  assert(Math.abs(sp.lon - -21.7382) < 0.01, `lon ${sp.lon}`);
+  assert(Math.abs(sp.altKm - 855.18) < 1, `alt ${sp.altKm}`);
 });
 
 Deno.test("subpoint always returns degrees in range", () => {
@@ -824,10 +894,11 @@ Deno.test("lookAngles reports a plausible range and elevation", () => {
   const look = lookAngles(satrec, { lat: 52.23, lon: 21.01, altM: 100 }, AT);
   assert(look !== null);
 
-  // At this instant NOAA-19 is over the far side of the planet.
-  assert(look.elevationDeg < 0, `elevation ${look.elevationDeg}`);
-  assert(look.rangeKm > 1000 && look.rangeKm < 45000, `range ${look.rangeKm}`);
-  assert(look.azimuthDeg >= 0 && look.azimuthDeg <= 360, `azimuth ${look.azimuthDeg}`);
+  // Verified against satellite.js: elevation -12.216, azimuth 245.931,
+  // range 5019.36 km. Below the horizon, so not a recordable pass.
+  assert(Math.abs(look.elevationDeg - -12.216) < 0.01, `elevation ${look.elevationDeg}`);
+  assert(Math.abs(look.azimuthDeg - 245.931) < 0.01, `azimuth ${look.azimuthDeg}`);
+  assert(Math.abs(look.rangeKm - 5019.36) < 1, `range ${look.rangeKm}`);
 });
 
 Deno.test("groundTrack samples the requested window at the requested step", () => {
@@ -1466,11 +1537,11 @@ import { lookAngles, toSatrec } from "./orbit.ts";
 import { nextPasses } from "./passes.ts";
 
 const N19 = {
-  line1: "1 33591U 09005A   24069.51782528  .00000267  00000+0  15776-3 0  9993",
-  line2: "2 33591  99.0430 128.5147 0013936 245.4055 114.5747 14.12775846775777",
+  line1: "1 33591U 09005A   26207.61995983  .00000042  00000+0  46283-4 0  9994",
+  line2: "2 33591  98.9503 278.5194 0012694 279.3580  80.6157 14.13479705900051",
 };
 const WARSAW = { lat: 52.23, lon: 21.01, altM: 100 };
-const FROM = new Date("2024-03-09T00:00:00Z");
+const FROM = new Date("2026-07-27T00:00:00Z");
 
 function satrec() {
   const s = toSatrec(N19);
@@ -1480,8 +1551,9 @@ function satrec() {
 
 Deno.test("nextPasses finds a plausible number of passes in 24 hours", () => {
   const passes = nextPasses("19", satrec(), WARSAW, FROM, 24);
-  // A prototype against these exact elements found 9. The band leaves room
-  // for boundary passes without letting a broken search pass silently.
+  // A prototype against these exact elements and this exact station found
+  // 9 (NOAA-15 gave 8, NOAA-18 gave 9). The band leaves room for boundary
+  // passes without letting a broken search pass silently.
   assert(passes.length >= 5 && passes.length <= 12, `found ${passes.length}`);
 });
 
@@ -2247,8 +2319,8 @@ import { groundTrack, subpoint, toSatrec } from "@/lib/orbit";
 import { readToken } from "@/lib/theme";
 
 const DEMO_TLE = {
-  line1: "1 33591U 09005A   24069.51782528  .00000267  00000+0  15776-3 0  9993",
-  line2: "2 33591  99.0430 128.5147 0013936 245.4055 114.5747 14.12775846775777",
+  line1: "1 33591U 09005A   26207.61995983  .00000042  00000+0  46283-4 0  9994",
+  line2: "2 33591  98.9503 278.5194 0012694 279.3580  80.6157 14.13479705900051",
 };
 ```
 
@@ -2866,7 +2938,7 @@ With the dev server running, open `/tracking` and confirm with a screenshot:
 - Editing latitude and pressing Save updates the station pin and repopulates the pass list.
 - Pressing Detect either moves the pin or reports an error inline without blanking the map.
 
-Then check the offline path: stop the network (or temporarily point `CELESTRAK_URL` at an unreachable host), delete `tle.json` from the app-data directory, reload, and confirm the base map and terminator still render with an error banner and a working Retry. Restore the URL afterwards.
+Then check the offline path: stop the network (or temporarily point `catalogUrl` at an unreachable host), delete `tle.json` from the app-data directory, reload, and confirm the base map and terminator still render with an error banner and a working Retry. Restore the URL afterwards.
 
 - [ ] **Step 4: Run the whole suite and type-check**
 

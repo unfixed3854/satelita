@@ -71,9 +71,16 @@ New dependencies:
 
 ### TLEs — `src/server/tle.ts`
 
-Source: `https://celestrak.org/NORAD/elements/gp.php?GROUP=noaa&FORMAT=tle`,
-filtered to catalog numbers 25338 (NOAA-15), 28654 (NOAA-18) and 33591
-(NOAA-19), so the cache holds only the satellites the app records.
+Source: Celestrak's `gp.php`, queried once per satellite by catalog number —
+25338 (NOAA-15), 28654 (NOAA-18) and 33591 (NOAA-19).
+
+A single group request would be preferable, but Celestrak has no group
+containing these three: there is no `noaa` group, and the `weather` group
+carries only the newer JPSS satellites (NOAA 20/21). Three requests a day,
+behind a 24-hour cache, stays well inside Celestrak's usage guidance.
+
+One satellite failing does not fail the others: whatever parses is merged and
+cached, so a 404 for one bird still leaves the other two on the map.
 
 Cache at `${appDataDir()}/tle.json`:
 
@@ -97,7 +104,12 @@ Cache at `${appDataDir()}/tle.json`:
 Element sets are validated before they may replace a good cache: two lines
 of 69 characters each, whose mod-10 checksum digit matches. A truncated or
 intercepted response otherwise yields a plausible pair of lines that SGP4
-propagates into a wrong orbit, with no visible error.
+propagates into a wrong orbit, with no visible error. (This is not
+hypothetical — the first draft of the implementation plan carried invented
+element sets that looked entirely convincing and failed exactly this check.)
+
+Celestrak serves CRLF line endings and pads satellite name lines with
+trailing spaces, so lines are right-trimmed before the 69-character test.
 
 `getTleFn()` always returns `{ sats, fetchedAt, stale }`. `stale` is true
 when the elements came from a cache that could not be refreshed. The UI
