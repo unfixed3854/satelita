@@ -64,3 +64,129 @@ Deno.test("parseTleText drops element sets that fail validation", () => {
   const corrupted = `${N19_L1.slice(0, 20)}9${N19_L1.slice(21)}`;
   assertEquals(parseTleText(`NOAA 19\n${corrupted}\n${N19_L2}\n`), {});
 });
+
+import { assert, assertRejects } from "@std/assert";
+
+import { getTles } from "./tle.ts";
+
+// getTles issues one request per satellite, so the stub answers based on
+// the CATNR in the URL — mirroring Celestrak's real per-satellite responses.
+const RESPONSES: Record<string, string> = {
+  "25338": `NOAA 15                 \r\n${N15_L1}\r\n${N15_L2}\r\n`,
+  "33591": `NOAA 19                 \r\n${N19_L1}\r\n${N19_L2}\r\n`,
+  "28654": "No GP data found",
+};
+
+function stubFetch(bodies: Record<string, string> = RESPONSES, status = 200): typeof fetch {
+  return ((url: string) => {
+    const catnr = new URL(url).searchParams.get("CATNR") ?? "";
+    return Promise.resolve(new Response(bodies[catnr] ?? "No GP data found", { status }));
+  }) as unknown as typeof fetch;
+}
+
+const failingFetch = (() => Promise.reject(new Error("offline"))) as unknown as typeof fetch;
+
+Deno.test("getTles fetches and writes a cache when none exists", async () => {
+  const dir = await Deno.makeTempDir();
+  const result = await getTles({ fetchImpl: stubFetch(), dir });
+
+  // NOAA-18's stubbed response carries no elements, so a partial result is
+  // the expected outcome — one satellite Celestrak cannot serve must not
+  // cost us the other two.
+  assertEquals(Object.keys(result.sats).sort(), ["15", "19"]);
+  assertEquals(result.stale, false);
+
+  const cached = JSON.parse(await Deno.readTextFile(`${dir}/tle.json`));
+  assertEquals(Object.keys(cached.sats).sort(), ["15", "19"]);
+});
+
+Deno.test("getTles requests each catalogued satellite once", async () => {
+  const dir = await Deno.makeTempDir();
+  const seen: string[] = [];
+  const spy = ((url: string) => {
+    const catnr = new URL(url).searchParams.get("CATNR") ?? "";
+    seen.push(catnr);
+    return Promise.resolve(new Response(RESPONSES[catnr] ?? "No GP data found"));
+  }) as unknown as typeof fetch;
+
+  await getTles({ fetchImpl: spy, dir });
+  assertEquals(seen.sort(), ["25338", "28654", "33591"]);
+});
+
+Deno.test("getTles serves a fresh cache without any network call", async () => {
+  const dir = await Deno.makeTempDir();
+  await getTles({ fetchImpl: stubFetch(), dir });
+
+  let called = false;
+  const spy = (() => {
+    called = true;
+    return Promise.reject(new Error("should not be called"));
+  }) as unknown as typeof fetch;
+
+  const result = await getTles({ fetchImpl: spy, dir });
+  assertEquals(called, false);
+  assertEquals(result.stale, false);
+  assertEquals(Object.keys(result.sats).sort(), ["15", "19"]);
+});
+
+Deno.test("getTles refetches once the cache passes 24 hours", async () => {
+  const dir = await Deno.makeTempDir();
+  const t0 = new Date("2026-07-01T00:00:00Z");
+  await getTles({ fetchImpl: stubFetch(), dir, now: t0 });
+
+  const later = new Date("2026-07-02T01:00:00Z");
+  const result = await getTles({ fetchImpl: stubFetch(), dir, now: later });
+  assertEquals(result.fetchedAt, later.toISOString());
+  assertEquals(result.stale, false);
+});
+
+Deno.test("getTles falls back to a stale cache when the network fails", async () => {
+  const dir = await Deno.makeTempDir();
+  const t0 = new Date("2026-07-01T00:00:00Z");
+  await getTles({ fetchImpl: stubFetch(), dir, now: t0 });
+
+  const later = new Date("2026-07-10T00:00:00Z");
+  const result = await getTles({ fetchImpl: failingFetch, dir, now: later });
+  assertEquals(result.stale, true);
+  assertEquals(result.fetchedAt, t0.toISOString());
+  assertEquals(Object.keys(result.sats).sort(), ["15", "19"]);
+});
+
+Deno.test("getTles throws when there is no cache and no network", async () => {
+  const dir = await Deno.makeTempDir();
+  await assertRejects(() => getTles({ fetchImpl: failingFetch, dir }));
+});
+
+Deno.test("getTles keeps a good cache when every response is garbage", async () => {
+  const dir = await Deno.makeTempDir();
+  const t0 = new Date("2026-07-01T00:00:00Z");
+  await getTles({ fetchImpl: stubFetch(), dir, now: t0 });
+
+  const captivePortal = stubFetch({
+    "25338": "<html>captive portal</html>",
+    "28654": "<html>captive portal</html>",
+    "33591": "<html>captive portal</html>",
+  });
+  const later = new Date("2026-07-10T00:00:00Z");
+  const result = await getTles({ fetchImpl: captivePortal, dir, now: later });
+  assertEquals(result.stale, true);
+  assertEquals(Object.keys(result.sats).sort(), ["15", "19"]);
+});
+
+Deno.test("getTles keeps a good cache when every request errors", async () => {
+  const dir = await Deno.makeTempDir();
+  const t0 = new Date("2026-07-01T00:00:00Z");
+  await getTles({ fetchImpl: stubFetch(), dir, now: t0 });
+
+  const later = new Date("2026-07-10T00:00:00Z");
+  const result = await getTles({ fetchImpl: stubFetch(RESPONSES, 503), dir, now: later });
+  assertEquals(result.stale, true);
+  assertEquals(Object.keys(result.sats).sort(), ["15", "19"]);
+});
+
+Deno.test("getTles recovers from a corrupt cache file", async () => {
+  const dir = await Deno.makeTempDir();
+  await Deno.writeTextFile(`${dir}/tle.json`, "{not json");
+  const result = await getTles({ fetchImpl: stubFetch(), dir });
+  assert(Object.keys(result.sats).length > 0);
+});
