@@ -34,8 +34,34 @@ Deno.test("splitAtAntimeridian leaves a non-crossing track whole", () => {
   assertEquals(segments[0].length, 3);
 });
 
-Deno.test("splitAtAntimeridian splits at exactly 180", () => {
+Deno.test("splitAtAntimeridian splits a track passing through 180", () => {
+  // 180 -> -179 is a 359 degree jump, which is the wrap this exists for.
   assertEquals(splitAtAntimeridian([{ lon: 179 }, { lon: 180 }, { lon: -179 }]).length, 2);
+});
+
+Deno.test("a jump of exactly 180 degrees does not split", () => {
+  // The threshold is `> 180`, so a diff of exactly 180 is treated as a
+  // real movement rather than a wrap. This case is unreachable with real
+  // data — ground tracks are sampled every 30s and footprint vertices
+  // every 4 degrees, so neither can step half the globe at once — but the
+  // boundary is pinned here so a future change to the comparison is a
+  // deliberate decision rather than an accident.
+  assertEquals(splitAtAntimeridian([{ lon: 0 }, { lon: 180 }]).length, 1);
+  assertEquals(splitAtAntimeridian([{ lon: -90 }, { lon: 90 }]).length, 1);
+});
+
+Deno.test("splitAtAntimeridian preserves every other property", () => {
+  // Task 12 splits ground tracks and footprint polygons, then reads `lat`
+  // off the resulting points. An implementation that rebuilt the objects
+  // from `lon` alone would pass every other test in this file and draw
+  // nothing but flat lines on the map.
+  const segments = splitAtAntimeridian([
+    { lon: 170, lat: 10, id: "a" },
+    { lon: -170, lat: 20, id: "b" },
+  ]);
+  assertEquals(segments.length, 2);
+  assertEquals(segments[0][0], { lon: 170, lat: 10, id: "a" });
+  assertEquals(segments[1][0], { lon: -170, lat: 20, id: "b" });
 });
 
 Deno.test("splitAtAntimeridian handles empty and single-point input", () => {
