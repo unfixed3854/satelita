@@ -2796,7 +2796,15 @@ git commit -m "feat: add the upcoming passes panel"
 
 **Files:**
 - Create: `src/hooks/use-tracking.ts`
-- Modify: `src/routes/tracking.tsx`, `README.md`
+- Modify: `src/routes/tracking.tsx`, `README.md`, `src/app.css`
+
+**`src/app.css` needs a third instrument colour.** In the `/* Instrument
+tokens */` block add `--signal-alt: oklch(0.78 0.13 220);` beside
+`--signal-warn`, and in the `@theme` block at the top of the file add
+`--color-signal-alt: var(--signal-alt);` beside `--color-signal-warn`, so
+the token is reachable from Tailwind the same way its siblings are. The
+lightness matches `--signal` and `--signal-warn` so the three read as one
+family rather than one colour shouting over the others.
 
 **Interfaces:**
 - Consumes: every earlier task.
@@ -2838,16 +2846,22 @@ const SAT_LABELS: Record<string, string> = {
   "19": "NOAA-19",
 };
 
+/** The instrument-token family, not shadcn's `--chart-*`. Only `--chart-1`
+ * and `--chart-2` carry any chroma in this theme — 3, 4 and 5 are
+ * achromatic greys, so a satellite assigned `--chart-3` renders in exactly
+ * the grey of the land and ocean beneath it and cannot be picked out at
+ * all. These three hues (green 148, amber 75, cyan 220) are the ones the
+ * rest of the app already uses for live readouts. */
 const SAT_COLOR_TOKENS: Record<string, string> = {
-  "15": "--chart-1",
-  "18": "--chart-2",
-  "19": "--chart-3",
+  "15": "--signal",
+  "18": "--signal-warn",
+  "19": "--signal-alt",
 };
 
 const SAT_COLOR_FALLBACKS: Record<string, string> = {
   "15": "#4ade80",
-  "18": "#38bdf8",
-  "19": "#fbbf24",
+  "18": "#fbbf24",
+  "19": "#38bdf8",
 };
 
 export function satelliteColors(): Record<string, string> {
