@@ -15,7 +15,11 @@ import {
   twoline2satrec,
 } from "satellite.js";
 
-/** Mean Earth radius, matching the value satellite.js uses internally. */
+/** Mean Earth radius. Deliberately the spherical mean rather than either
+ * ellipsoid radius satellite.js carries internally (6378.135 for SGP4's
+ * WGS72, 6378.137 for WGS84 transforms): the footprint is a circle on a
+ * sphere by construction, so the mean radius is the self-consistent
+ * choice. The difference is under 0.1 degrees of footprint radius. */
 const EARTH_RADIUS_KM = 6371;
 
 export interface Observer {
@@ -91,6 +95,12 @@ export function subpoint(satrec: SatRec, date: Date): Subpoint | null {
   return { lat, lon, altKm: geo.height };
 }
 
+/** Same two-layer guard as subpoint, and for a sharper reason: passes.ts
+ * brackets a pass with `elevation < 0` and `elevation >= 0` comparisons,
+ * and BOTH are false for NaN. An unguarded NaN elevation would not throw
+ * or log — the satellite would simply never appear to rise, silently
+ * vanishing from pass prediction. Returning null makes the absence
+ * explicit at the boundary. */
 export function lookAngles(
   satrec: SatRec,
   observer: Observer,
@@ -102,11 +112,15 @@ export function lookAngles(
     observerGeodetic(observer),
     eciToEcf(pv.position, gstime(date)),
   );
-  return {
-    elevationDeg: radiansToDegrees(look.elevation),
-    azimuthDeg: radiansToDegrees(look.azimuth),
-    rangeKm: look.rangeSat,
-  };
+  const elevationDeg = radiansToDegrees(look.elevation);
+  const azimuthDeg = radiansToDegrees(look.azimuth);
+  if (
+    !Number.isFinite(elevationDeg) || !Number.isFinite(azimuthDeg) ||
+    !Number.isFinite(look.rangeSat)
+  ) {
+    return null;
+  }
+  return { elevationDeg, azimuthDeg, rangeKm: look.rangeSat };
 }
 
 /** Inclusive of both endpoints. Points SGP4 cannot produce are skipped

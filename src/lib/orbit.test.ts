@@ -90,6 +90,41 @@ Deno.test("groundTrack samples the requested window at the requested step", () =
   }
 });
 
+// A TLE whose argument-of-perigee field is non-numeric. This survives
+// toSatrec's guard — sgp4init recomputes `no` and `jdsatepoch` from other
+// fields, so both stay finite — but propagate then returns a NON-null
+// result carrying {x: null, y: null, z: null}. Verified against the
+// installed satellite.js@7.1.0. It is the narrowest input that reaches the
+// NaN path, which is why it is used rather than wholesale garbage.
+const N19_BAD_ARGP = {
+  line1: N19.line1,
+  line2: "2 33591  98.9503 278.5194 0012694 ABCDEFGH  80.6157 14.13479705900051",
+};
+
+Deno.test("lookAngles returns null rather than NaN angles", () => {
+  const satrec = toSatrec(N19_BAD_ARGP);
+  // Confirms the premise: this really does get past toSatrec.
+  assert(satrec !== null, "fixture should survive toSatrec, or it tests nothing");
+  assertEquals(lookAngles(satrec, { lat: 52.23, lon: 21.01, altM: 100 }, AT), null);
+});
+
+Deno.test("a NaN elevation would defeat both pass-bracketing comparisons", () => {
+  // Guards the guard: this documents WHY lookAngles must return null
+  // instead of NaN. passes.ts brackets a pass with these two comparisons,
+  // and NaN makes both false, so the satellite would never appear to rise.
+  const nan = Number.NaN;
+  assertEquals(nan < 0, false);
+  assertEquals(nan >= 0, false);
+});
+
+Deno.test("groundTrack drops unusable points without breaking the run", () => {
+  const satrec = toSatrec(N19_BAD_ARGP);
+  assert(satrec !== null);
+  // Every sample is unusable for this fixture, so the track is empty
+  // rather than an array of NaN coordinates.
+  assertEquals(groundTrack(satrec, AT, new Date(AT.getTime() + 600_000), 60), []);
+});
+
 Deno.test("footprintRadiusDeg matches the geometry for a NOAA orbit", () => {
   // acos(6371 / (6371 + 868.9)) = 28.36 degrees.
   assert(Math.abs(footprintRadiusDeg(868.9) - 28.3595) < 0.001);
