@@ -3,10 +3,10 @@
     "@std/assert": "jsr:@std/assert@^1"
   },
   "tasks": {
-    "dev": "npm run dev",
+    "dev": "vite dev",
     "preview": "deno desktop --hmr --allow-env --allow-read --allow-write --allow-net --allow-run=rtl_fm,rtl_test,sox,satdump .",
     "bundle": "deno desktop --allow-env --allow-read --allow-write --allow-net --allow-run=rtl_fm,rtl_test,sox,satdump .",
-    "build": "npm run build",
+    "build": "vite build && tsc --noEmit",
     "test": "deno test --allow-env --allow-read --allow-write src/server/ src/lib/"
   },
   "desktop": {

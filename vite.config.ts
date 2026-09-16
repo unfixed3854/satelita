@@ -20,7 +20,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": path.resolve(import.meta.dirname, "./src"),
     },
   },
   // Without an explicit preset, Nitro's package-manager sniffing sees the
@@ -29,7 +29,12 @@ export default defineConfig({
   // preset targets `deno run`/Deno Deploy directly and (as of nitro
   // 3.0.260311-beta) fails to build here; it's also the wrong target
   // anyway, since `deno desktop` serves this build itself. Pin the
-  // Node-compatible preset so `npm run build` (and therefore
-  // `deno task build`) is deterministic regardless of how it's invoked.
-  plugins: [tailwindcss(), tanstackStart({ srcDirectory: "src" }), viteReact(), nitro({ preset: "node-server" })],
+  // Node-compatible preset so `deno task build` is deterministic regardless
+  // of how it's invoked.
+  plugins: [
+    tailwindcss(),
+    tanstackStart({ srcDirectory: "src" }),
+    viteReact(),
+    nitro({ preset: "node-server" }),
+  ],
 });
